@@ -395,4 +395,923 @@ Using device: mps
 Using device: mps
 Using device: mps
 Using device: mps
-  0%|          | 0/1 [00:00<?, ?it/s]
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.67s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.65s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.80s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.46s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.45s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.40s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.48s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.98s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.86s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.29s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.76s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.34s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.39s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.36s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.21s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.51s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.31s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.81s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.47s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.50s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.42s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.41s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.39s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.42s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.46s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.67s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.49s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.32s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.36s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.49s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.28s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.37s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.29s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.20s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.26s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.28s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.39s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.22s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.35s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.28s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.38s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.39s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.19s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.28s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.33s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.36s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.34s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.51s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.24s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.36s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.16s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.23s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.33s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.23s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.30s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.26s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.26s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.48s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.37s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.32s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.33s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.38s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.29s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:25<00:00, 25.12s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.51s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.44s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.57s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.22s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.29s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.29s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.24s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.27s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.34s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.32s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.21s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.30s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.14s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.32s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.32s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.28s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.22s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.23s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.17s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.43s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.26s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.45s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.32s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.16s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.57s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.30s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.29s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.47s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.30s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.57s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.23s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.34s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.40s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.22s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.24s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.24s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [16:38<00:00, 998.52s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                              Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [09:53<00:00, 593.74s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                              Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.85s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.27s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.44s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.25s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.27s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.10s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.40s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.42s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.31s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.18s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.47s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:24<00:00, 24.41s/it]Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+                                             Using device: mps
+Using device: mps
+Using device: mps
+Using device: mps
+time epoch: 472.44132034778596
+epoch number: 19
+Traceback (most recent call last):
+  File "/Users/davidjin/Projects/FedAL/main.py", line 366, in <module>
+    train(models, criterion, optimizers, schedulers, dataloaders, EPOCH)
+  File "/Users/davidjin/Projects/FedAL/main.py", line 220, in train
+    model_state[key] /= np.sum(selected_data_num)
+RuntimeError: result type Float can't be cast to the desired output type Long
