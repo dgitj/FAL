@@ -15,6 +15,22 @@ import torch.optim.lr_scheduler as lr_scheduler
 import torch.nn.functional as F
 from torch.distributions import Beta
 
+# mps_available = torch.backends.mps.is_available()
+# print(f"MPS available: {mps_available}")
+
+# cuda_available = torch.cuda.is_available()
+# print(f"CUDA available: {cuda_available}")
+
+# Device
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+elif torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
+
+print(f"Using device: {device}")
+
 # Model
 import models.preact_resnet as resnet
 
@@ -93,15 +109,15 @@ def train_epoch_client_distil(selected_clients_id, models, criterion, optimizers
         mod.train()
         unlab_set = read_data(dataloaders['unlab-private'][c])
         for data in tqdm(dataloaders['train-private'][c], leave=False, total=len(dataloaders['train-private'][c])):
-            inputs = data[0].cuda()
-            labels = data[1].cuda()
+            inputs = data[0].to(device)
+            labels = data[1].to(device)
 
             unlab_data = next(unlab_set)
-            unlab_inputs = unlab_data[0].cuda()
+            unlab_inputs = unlab_data[0].to(device)
 
             # mix unlabelled data
             m = Beta(torch.FloatTensor([BETA[0]]).item(), torch.FloatTensor([BETA[1]]).item())
-            beta_0 = m.sample(sample_shape=torch.Size([unlab_inputs.size(0)])).cuda()
+            beta_0 = m.sample(sample_shape=torch.Size([unlab_inputs.size(0)])).to(device)
             beta = beta_0.view(unlab_inputs.size(0), 1, 1, 1)
             indices = np.random.choice(unlab_inputs.size(0), replace=False)
             mixed_inputs =  beta * unlab_inputs + (1 - beta) * unlab_inputs[indices,...]
@@ -148,8 +164,8 @@ def test(models, dataloaders, mode='test'):
     correct = 0
     with torch.no_grad():
         for (inputs, labels) in dataloaders[mode]:
-            inputs = inputs.cuda()
-            labels = labels.cuda()
+            inputs = inputs.to(device)
+            labels = labels.to(device)
 
             scores, _ = models['server'](inputs)
             _, preds = torch.max(scores.data, 1)
@@ -180,11 +196,13 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs):
         # local updates
         start = time.time()
         for epoch in range(num_epochs):
-            for c in selected_clients_id:
-                schedulers['clients'][c].step()
             train_epoch_client_distil(selected_clients_id, models, criterion, optimizers, dataloaders, com)
+            for c in selected_clients_id:
+                schedulers['clients'][c].step() #changed order of optimizer and scheduler
         end = time.time()
         print('time epoch:',(end-start)/num_epochs)
+        print('epoch number:', epoch)
+
 
         # aggregation
         local_states = [
@@ -209,11 +227,11 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs):
 def get_discrepancy(model, model_server, unlabeled_loader, c):
     model.eval()
     model_server.eval()
-    discrepancy = torch.tensor([]).cuda()
+    discrepancy = torch.tensor([]).to(device)
 
     with torch.no_grad():
         for (inputs, labels) in unlabeled_loader:
-            inputs = inputs.cuda()
+            inputs = inputs.to(device)
 
             scores, features = model(inputs)
             scores_t, _= model_server(inputs)
@@ -290,7 +308,8 @@ if __name__ == '__main__':
             values, counts = np.unique(id2lab[np.array(labeled_set_list[c])], return_counts=True)
             ratio = np.zeros(num_classes)
             ratio[values] = counts
-            loss_weight_list.append(torch.tensor(ratio).cuda().float())
+            loss_weight_list.append(torch.tensor(ratio, dtype=torch.float32).to(device))
+            # loss_weight_list.append(torch.tensor(ratio).to(device).float())
 
             data_num.append(len(labeled_set_list[c]))
             unlabeled_set_list.append(data_list[c][base[c]:])
@@ -303,7 +322,7 @@ if __name__ == '__main__':
                                                     num_workers=4,
                                                     pin_memory=True))
 
-            client_models.append(copy.deepcopy(resnet8).cuda())
+            client_models.append(copy.deepcopy(resnet8).to(device))
         data_num = np.array(data_num)
 
         del resnet8
@@ -321,7 +340,7 @@ if __name__ == '__main__':
         # Active learning cycles
         for cycle in range(CYCLES):
 
-            server = resnet.preact_resnet8_cifar(num_classes=num_classes).cuda()
+            server = resnet.preact_resnet8_cifar(num_classes=num_classes).to(device)
             models['server'] = server
             criterion = nn.CrossEntropyLoss(reduction='none')
 
@@ -376,7 +395,7 @@ if __name__ == '__main__':
                 ratio[values] = counts
 
                 # compute new distributions
-                loss_weight_list_2.append(torch.tensor(ratio).cuda().float())
+                loss_weight_list_2.append(torch.tensor(ratio).to(device).float())
                 data_num.append(len(labeled_set_list[c]))
 
                 # dataloaders with updated data pools
