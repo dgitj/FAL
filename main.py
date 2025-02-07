@@ -217,7 +217,8 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs):
             model_state[key] = model_state[key]*selected_data_num[0]
             for i in range(1, len(selected_clients_id)):
                 model_state[key] += local_states[i][key]*selected_data_num[i]
-            model_state[key] /= np.sum(selected_data_num)
+            # model_state[key] /= np.sum(selected_data_num)
+            model_state[key] = model_state[key].float() / np.sum(selected_data_num)
         models['server'].load_state_dict(model_state, strict=False)
 
     print('>> Finished.')
