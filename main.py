@@ -199,9 +199,9 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs):
             train_epoch_client_distil(selected_clients_id, models, criterion, optimizers, dataloaders, com)
             for c in selected_clients_id:
                 schedulers['clients'][c].step() #changed order of optimizer and scheduler
+            print(f'Epoch: {epoch + 1}/{num_epochs} | Communication round: {com + 1}/{COMMUNICATION}')    
         end = time.time()
         print('time epoch:',(end-start)/num_epochs)
-        print('epoch number:', epoch)
 
 
         # aggregation
