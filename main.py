@@ -317,7 +317,8 @@ if __name__ == '__main__':
             unlabeled_set_list.append(data_list[c][base[c]:])
             private_train_loaders.append(DataLoader(cifar10_train, batch_size=BATCH,
                            sampler=SubsetRandomSampler(labeled_set_list[c]),
-                           num_workers= 4,
+                           # num_workers= 4,
+                            num_workers= 2,
                            pin_memory=True))
             private_unlab_loaders.append(DataLoader(cifar10_train, batch_size=BATCH,
                                                     sampler=SubsetRandomSampler(unlabeled_set_list[c]),
