@@ -1,5 +1,5 @@
 # Ignore the data folder
-/data/
+/data/cifare-10-batches-py/cifar-10-python.tar.gz
 
 # macOS system files
 .DS_Store
@@ -32,3 +32,4 @@ venv/
 # Build files
 dist/
 build/
+data/cifar-10-batches-py/cifar-10-python.tar.gz
