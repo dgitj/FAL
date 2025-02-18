@@ -263,7 +263,7 @@ if __name__ == '__main__':
         id2lab.append(cifar10_train[id][1])
     id2lab = np.array(id2lab)
 
-    with open("alpha0-1_cifar10_{}clients.json".format(CLIENTS)) as json_file:
+    with open("test_alpha0-1_cifar10_{}clients.json".format(CLIENTS)) as json_file:
         data_splits = json.load(json_file)
     for trial in range(TRIALS):
         random.seed(100 + trial)
