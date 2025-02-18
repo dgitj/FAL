@@ -4,6 +4,7 @@ import random
 import copy
 import json
 import time
+import importlib
 
 # Torch
 import torch
@@ -30,6 +31,13 @@ else:
     device = torch.device("cpu")
 
 print(f"Using device: {device}")
+
+# Active Learning query strategy selection
+ACTIVE_LEARNING_STRATEGY = "kl_divergence"
+
+# Dynamically import the selected active learning strategy
+sampling_module = importlib.import_module(f"active_learning.{ACTIVE_LEARNING_STRATEGY}")
+
 
 # Model
 import models.preact_resnet as resnet
@@ -225,7 +233,10 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs):
     print('>> Finished.')
 
 
+def get_discrepancy(model, model_server, unlabeled_loader, c):
+    return sampling_module.sample(model, model_server, unlabeled_loader, c)
 
+"""
 def get_discrepancy(model, model_server, unlabeled_loader, c):
     model.eval()
     model_server.eval()
@@ -251,6 +262,8 @@ def get_discrepancy(model, model_server, unlabeled_loader, c):
 
     return discrepancy.cpu()
 
+"""
+
 ##
 # Main
 if __name__ == '__main__':
@@ -263,7 +276,7 @@ if __name__ == '__main__':
         id2lab.append(cifar10_train[id][1])
     id2lab = np.array(id2lab)
 
-    with open("test_alpha0-1_cifar10_{}clients.json".format(CLIENTS)) as json_file:
+    with open(distribution/ f"test_alpha0-1_cifar10_{}clients.json".format(CLIENTS)) as json_file:
         data_splits = json.load(json_file)
     for trial in range(TRIALS):
         random.seed(100 + trial)
@@ -384,8 +397,12 @@ if __name__ == '__main__':
                                               sampler=SubsetSequentialSampler(unlabeled_set_list[c]),
                                               pin_memory=True)
 
-                discrepancy = get_discrepancy(models['clients'][c],models['server'], unlabeled_loader,c)
-                arg = np.argsort(discrepancy)
+                # discrepancy = get_discrepancy(models['clients'][c],models['server'], unlabeled_loader,c)
+                # arg = np.argsort(discrepancy)
+
+                discrepancy = get_discrepancy(models['clients'][c], models['server'], unlabeled_loader, c)
+                sample_indices = torch.argsort(discrepancy, descending=True)  # Higher scores = more uncertainty
+
 
                 models['clients'][c].load_state_dict(server_state_dict, strict=False)
 
