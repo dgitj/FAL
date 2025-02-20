@@ -36,7 +36,7 @@ print(f"Using device: {device}")
 ACTIVE_LEARNING_STRATEGY = "kl_divergence"
 
 # Dynamically import the selected active learning strategy
-sampling_module = importlib.import_module(f"active_learning.{ACTIVE_LEARNING_STRATEGY}")
+sampling_module = importlib.import_module(f"query_strategies.{ACTIVE_LEARNING_STRATEGY}")
 
 
 # Model
@@ -53,6 +53,11 @@ from tqdm import tqdm
 # dataset
 from data.sampler import SubsetSequentialSampler
 from torch.utils.data.sampler import SubsetRandomSampler
+
+# Query strategies
+from query_strategies.kafal import sample
+from query_strategies.entropy import sample
+from query_strategies.badge import sample
 
 # Load data
 cifar10_train_transform = T.Compose([
@@ -276,7 +281,7 @@ if __name__ == '__main__':
         id2lab.append(cifar10_train[id][1])
     id2lab = np.array(id2lab)
 
-    with open(distribution/ f"test_alpha0-1_cifar10_{}clients.json".format(CLIENTS)) as json_file:
+    with open(f"distribution/test_alpha0-1_cifar10_{}clients.json".format(CLIENTS)) as json_file:
         data_splits = json.load(json_file)
     for trial in range(TRIALS):
         random.seed(100 + trial)
