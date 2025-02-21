@@ -5,8 +5,9 @@ from query_strategies.badge import BADGESampler
 class StrategyManager:
     def __init__(self, strategy_name, loss_weight_list=None, device="cuda"):
         self.device = device
-        self.set_strategy = self._initialize_strategy(strategy_name , loss_weight_list)
-        self.set_strategy(strategy_name)
+        self.sampler = self._initialize_strategy(strategy_name , loss_weight_list)
+        self.loss_weight_list = loss_weight_list
+
     
     def _initialize_strategy(self, strategy_name, loss_weight_list):
         if strategy_name == "KAFAL":
@@ -21,5 +22,5 @@ class StrategyManager:
     def select_samples(self, *args, **kwargs):
         if not self.strategy_name:
             raise ValueError("Strategy not set. Use set_strategy() to set the strategy.")   
-        return self.sampler.sample(*args, **kwargs) 
+        return self.sampler.select_samples(*args, **kwargs) 
     
