@@ -39,7 +39,7 @@ ACTIVE_LEARNING_STRATEGY = "KAFAL"
 # Dynamically import the selected active learning strategy
 strategy_manager = StrategyManager(
     strategy_name=ACTIVE_LEARNING_STRATEGY,
-    loss_weight_list=loss_weight_list
+    loss_weight_list=None
 )
 
 
