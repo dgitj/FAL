@@ -1,18 +1,14 @@
-import os
-import importlib
+# Import all available sampling strategies and manager
 
-# Dynamically load all query strategy modules in the directory
-strategy_modules = {}
+from .badge import BADGESampler
+from .entropy import EntropySampler
+from .kafal import KAFALSampler
+from .strategy_manager import StrategyManager
 
-for filename in os.listdir(os.path.dirname(__file__)):
-    if filename.endswith(".py") and filename != "__init__.py":
-        module_name = filename[:-3]  # Remove ".py" extension
-        module = importlib.import_module(f"query_strategies.{module_name}")
-        strategy_modules[module_name] = module
-
-# Explicitly import key modules for easier access
-from .badge import sample as badge_sample
-from .entropy import sample as entropy_sample
-from .kafal import sample as kafal_sample
-
-__all__ = ["badge_sample", "entropy_sample", "kafal_sample", "strategy_modules"]
+# Define __all__ for explicit exports
+__all__ = [
+    "BADGESampler",
+    "EntropySampler",
+    "KAFALSampler",
+    "StrategyManager",
+]
