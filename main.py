@@ -32,11 +32,15 @@ else:
 
 print(f"Using device: {device}")
 
+from query_strategies.strategy_manager import StrategyManager
 # Active Learning query strategy selection
-ACTIVE_LEARNING_STRATEGY = "kl_divergence"
+ACTIVE_LEARNING_STRATEGY = "KAFAL"
 
 # Dynamically import the selected active learning strategy
-sampling_module = importlib.import_module(f"query_strategies.{ACTIVE_LEARNING_STRATEGY}")
+strategy_manager = StrategyManager(
+    strategy_name=ACTIVE_LEARNING_STRATEGY,
+    loss_weight_list=loss_weight_list
+)
 
 
 # Model
@@ -53,11 +57,6 @@ from tqdm import tqdm
 # dataset
 from data.sampler import SubsetSequentialSampler
 from torch.utils.data.sampler import SubsetRandomSampler
-
-# Query strategies
-from query_strategies.kafal import sample
-from query_strategies.entropy import sample
-from query_strategies.badge import sample
 
 # Load data
 cifar10_train_transform = T.Compose([
@@ -212,7 +211,7 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs):
             train_epoch_client_distil(selected_clients_id, models, criterion, optimizers, dataloaders, com)
             for c in selected_clients_id:
                 schedulers['clients'][c].step() #changed order of optimizer and scheduler
-            print(f'Epoch: {epoch + 1}/{num_epochs} | Communication round: {com + 1}/{COMMUNICATION}')    
+            print(f'Epoch: {epoch + 1}/{num_epochs} | Communication round: {com + 1}/{COMMUNICATION} | Cycle: {cycle + 1}/{CYCLES}')    
         end = time.time()
         print('time epoch:',(end-start)/num_epochs)
 
@@ -238,37 +237,6 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs):
     print('>> Finished.')
 
 
-def get_discrepancy(model, model_server, unlabeled_loader, c):
-    return sampling_module.sample(model, model_server, unlabeled_loader, c)
-
-"""
-def get_discrepancy(model, model_server, unlabeled_loader, c):
-    model.eval()
-    model_server.eval()
-    discrepancy = torch.tensor([]).to(device)
-
-    with torch.no_grad():
-        for (inputs, labels) in unlabeled_loader:
-            inputs = inputs.to(device)
-
-            scores, features = model(inputs)
-            scores_t, _= model_server(inputs)
-
-            # intensify specialized knowledge
-            spc = loss_weight_list[c]
-            spc = spc.unsqueeze(0).expand(labels.size(0), -1)
-
-            const = 1
-            scores = scores + const * spc.log()
-            scores_t = scores_t + const * spc.log()
-            scores = F.kl_div(F.log_softmax(scores, -1), F.softmax(scores_t, -1), reduction='none').sum(1) + F.kl_div(F.log_softmax(scores_t, -1), F.softmax(scores, -1), reduction='none').sum(1)
-            scores *= 0.5
-            discrepancy = torch.cat((discrepancy, scores), 0)
-
-    return discrepancy.cpu()
-
-"""
-
 ##
 # Main
 if __name__ == '__main__':
@@ -281,7 +249,7 @@ if __name__ == '__main__':
         id2lab.append(cifar10_train[id][1])
     id2lab = np.array(id2lab)
 
-    with open(f"distribution/test_alpha0-1_cifar10_{}clients.json".format(CLIENTS)) as json_file:
+    with open(f"distribution/alpha0-1_cifar10_{CLIENTS}clients.json") as json_file:
         data_splits = json.load(json_file)
     for trial in range(TRIALS):
         random.seed(100 + trial)
@@ -402,18 +370,21 @@ if __name__ == '__main__':
                                               sampler=SubsetSequentialSampler(unlabeled_set_list[c]),
                                               pin_memory=True)
 
-                # discrepancy = get_discrepancy(models['clients'][c],models['server'], unlabeled_loader,c)
-                # arg = np.argsort(discrepancy)
-
-                discrepancy = get_discrepancy(models['clients'][c], models['server'], unlabeled_loader, c)
-                sample_indices = torch.argsort(discrepancy, descending=True)  # Higher scores = more uncertainty
-
+                selected_samples, remaining_unlabeled = strategy_manager.select_samples(
+                    models['clients'][c],               # Client model
+                    models['server'],                   # Server model (only used for discrepancy)
+                    unlabeled_loader,                   # Unlabeled data for the client
+                    c,                                  # Client ID (only for discrepancy)
+                    unlabeled_set_list[c],              # List of unlabeled sample IDs
+                    add[c]                              # Number of samples to select
+                )
 
                 models['clients'][c].load_state_dict(server_state_dict, strict=False)
 
-                # add the selected annotated data to the labelled set and remove from the unlabelled set
-                labeled_set_list[c].extend(list(torch.tensor(unlabeled_set_list[c])[arg][-add[c]:].numpy()))
-                unlabeled_set_list[c] = list(torch.tensor(unlabeled_set_list[c])[arg][:-add[c]].numpy())
+                # Update labeled and unlabeled sets
+                labeled_set_list[c].extend(selected_samples)
+                unlabeled_set_list[c] = remaining_unlabeled
+
                 values, counts = np.unique(id2lab[np.array(labeled_set_list[c])], return_counts=True)
                 ratio = np.zeros(num_classes)
 
