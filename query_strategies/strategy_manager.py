@@ -6,6 +6,7 @@ class StrategyManager:
     def __init__(self, strategy_name, loss_weight_list=None, device="cuda"):
         self.device = device
         self.sampler = self._initialize_strategy(strategy_name , loss_weight_list)
+        self.strategy_name = strategy_name
         self.loss_weight_list = loss_weight_list
 
     

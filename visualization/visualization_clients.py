@@ -3,7 +3,7 @@ import numpy as np
 
 # Data points with missing values replaced by None
 number_clients = [10, 20, 40, 60, 80, 100]
-accuracy_kafal = [72.93, 64, 64.91, 60, 55, 52]
+accuracy_kafal = [72.93, 64, 64.91, 59.01, 62.06, 52]
 accuracy_random = [66.5, 52, None, None, None, 50]
 accuracy_entropy = [71, 59.5, None, None, None, 50.5]
 accuracy_badge = [71, 57.5, None, None, None, 50.5]
