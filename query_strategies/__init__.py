@@ -3,6 +3,7 @@
 from .badge import BADGESampler
 from .entropy import EntropySampler
 from .kafal import KAFALSampler
+from .random import RandomSampler
 from .strategy_manager import StrategyManager
 
 # Define __all__ for explicit exports

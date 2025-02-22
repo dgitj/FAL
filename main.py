@@ -33,8 +33,6 @@ else:
 print(f"Using device: {device}")
 
 from query_strategies.strategy_manager import StrategyManager
-# Active Learning query strategy selection
-ACTIVE_LEARNING_STRATEGY = "KAFAL"
 
 
 # Model
@@ -257,6 +255,11 @@ if __name__ == '__main__':
 
         rest_data = indices.copy()
 
+        print('Query Strategy:', ACTIVE_LEARNING_STRATEGY)
+        print('Number of clients:', CLIENTS)
+        print('Number of epochs:', EPOCH)
+        print('Number of communication rounds:', COMMUNICATION)
+
         num_per_client = int(len(rest_data) / CLIENTS)
         resnet8 = resnet.preact_resnet8_cifar(num_classes=num_classes)
         client_models = []
@@ -312,7 +315,8 @@ if __name__ == '__main__':
         # added strategy manager
         strategy_manager = StrategyManager(
             strategy_name=ACTIVE_LEARNING_STRATEGY, 
-            loss_weight_list=loss_weight_list
+            loss_weight_list=loss_weight_list,
+            device=device
         )
 
 
