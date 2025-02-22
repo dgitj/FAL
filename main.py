@@ -36,12 +36,6 @@ from query_strategies.strategy_manager import StrategyManager
 # Active Learning query strategy selection
 ACTIVE_LEARNING_STRATEGY = "KAFAL"
 
-# Dynamically import the selected active learning strategy
-strategy_manager = StrategyManager(
-    strategy_name=ACTIVE_LEARNING_STRATEGY,
-    loss_weight_list=None
-)
-
 
 # Model
 import models.preact_resnet as resnet
@@ -313,6 +307,14 @@ if __name__ == '__main__':
 
             client_models.append(copy.deepcopy(resnet8).to(device))
         data_num = np.array(data_num)
+
+
+        # added strategy manager
+        strategy_manager = StrategyManager(
+            strategy_name=ACTIVE_LEARNING_STRATEGY, 
+            loss_weight_list=loss_weight_list
+        )
+
 
         del resnet8
 

@@ -31,6 +31,11 @@ class KAFALSampler:
         model_server.eval()
         discrepancy = torch.tensor([]).to(self.device)
 
+        # check loss_weight_list
+        if not self.loss_weight_list or len(self.loss_weight_list) <= c:
+            raise ValueError(f"Loss weight list for client {c} is not properly initialized.")
+
+
         with torch.no_grad():
             for (inputs, labels) in unlabeled_loader:
                 inputs = inputs.to(self.device)
