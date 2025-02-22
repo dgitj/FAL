@@ -13,75 +13,43 @@ class BADGESampler:
         self.device = device
         
     def compute_gradient_embeddings(self, model, unlabeled_loader):
-        """
-        Computes gradient embeddings for the unlabeled data.
-        Args:
-            model (torch.nn.Module): The model used for predictions.
-            unlabeled_loader (DataLoader): DataLoader for the unlabeled data.
-        Returns:
-            tuple: Gradient embeddings and their corresponding indices.
-        """
-        model.eval()
-        gradient_embeddings = []
-        indices = []
-        
-        with torch.no_grad():
-            for batch_idx, batch in enumerate(unlabeled_loader):
-                # Handle different DataLoader formats
-                if isinstance(batch, (list, tuple)) and len(batch) >= 2:
-                    inputs = batch[0].to(self.device)
-                    if hasattr(batch[1], 'item'):  # If second element is indices
-                        batch_indices = batch[1].tolist()
-                    else:
-                        batch_indices = list(range(batch_idx * unlabeled_loader.batch_size,
-                                               min((batch_idx + 1) * unlabeled_loader.batch_size,
-                                                   len(unlabeled_loader.dataset))))
-                else:
-                    inputs = batch.to(self.device)
-                    batch_indices = list(range(batch_idx * unlabeled_loader.batch_size,
-                                           min((batch_idx + 1) * unlabeled_loader.batch_size,
-                                               len(unlabeled_loader.dataset))))
+            model.eval()  # Set model to evaluation mode
+            gradients = []
+            data_indices = []
+
+            for batch_idx, (inputs, _) in enumerate(unlabeled_loader):
+                inputs = inputs.to(self.device)
+                inputs.requires_grad_(True)
+
+                outputs = model(inputs)
+                if isinstance(outputs, tuple):
+                    outputs = outputs[0]
+
+                # Create virtual labels from predictions (single operation)
+                probs = F.softmax(outputs, dim=1)
+                grad_embedding = torch.zeros_like(probs)
+                virtual_labels = probs.max(1)[1]
+                grad_embedding.scatter_(1, virtual_labels.unsqueeze(1), 1)
                 
-                # Forward pass to get predictions
-                try:
-                    outputs = model(inputs)
-                    if isinstance(outputs, tuple):
-                        outputs = outputs[0]  # Take first element if model returns multiple outputs
-                except:
-                    raise ValueError("Model forward pass failed. Check your model architecture.")
+                # Single backward pass for all classes
+                loss = -(grad_embedding * outputs).sum()
+                loss.backward()
                 
-                probabilities = F.softmax(outputs, dim=-1)
-                pseudo_labels = probabilities.max(dim=1)[1]
+                # Store gradients and indices
+                grad = inputs.grad.view(inputs.size(0), -1)
+                gradients.append(grad.cpu().detach())
                 
-                # Compute gradients for each sample
-                for i in range(inputs.size(0)):
-                    x = inputs[i:i+1].clone().requires_grad_(True)
-                    
-                    # Forward pass for single sample
-                    output = model(x)
-                    if isinstance(output, tuple):
-                        output = output[0]
-                        
-                    loss = F.cross_entropy(output, pseudo_labels[i:i+1])
-                    
-                    # Compute gradients
-                    model.zero_grad()
-                    loss.backward()
-                    
-                    # Extract gradients from final layer (output layer)
-                    grad_embedding = []
-                    for name, param in model.named_parameters():
-                        if 'weight' in name and param.requires_grad:
-                            if param.grad is not None:
-                                grad_embedding.append(param.grad.flatten().detach().cpu().numpy())
-                    
-                    if grad_embedding:
-                        # Concatenate all gradients into one vector
-                        grad_embedding = np.concatenate(grad_embedding)
-                        gradient_embeddings.append(grad_embedding)
-                        indices.append(batch_indices[i])
-                    
-        return np.array(gradient_embeddings), indices
+                batch_indices = list(range(
+                    batch_idx * unlabeled_loader.batch_size,
+                    min((batch_idx + 1) * unlabeled_loader.batch_size, len(unlabeled_loader.dataset))
+                ))
+                data_indices.extend(batch_indices)
+                inputs.grad = None
+
+            gradients = torch.cat(gradients, dim=0)
+            return gradients, data_indices
+
+
         
     def select_samples(self, model, unlabeled_loader, unlabeled_set, num_samples):
         """

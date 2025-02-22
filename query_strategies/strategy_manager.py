@@ -1,6 +1,8 @@
 from query_strategies.kafal import KAFALSampler
 from query_strategies.entropy import EntropySampler
 from query_strategies.badge import BADGESampler
+from query_strategies.random import RandomSampler
+from config import ACTIVE_LEARNING_STRATEGY
 
 class StrategyManager:
     def __init__(self, strategy_name, loss_weight_list=None, device="cuda"):
@@ -17,11 +19,17 @@ class StrategyManager:
             return EntropySampler(self.device)
         elif strategy_name == "BADGE":
             return BADGESampler(self.device)
+        elif strategy_name == "Random":
+            return RandomSampler(self.device)
         else:
             raise ValueError(f"Invalid strategy name: {strategy_name}")
         
-    def select_samples(self, *args, **kwargs):
+    def select_samples(self, model, model_server, unlabeled_loader, c, unlabeled_set, num_samples):
         if not self.strategy_name:
-            raise ValueError("Strategy not set. Use set_strategy() to set the strategy.")   
-        return self.sampler.select_samples(*args, **kwargs) 
+            raise ValueError("Strategy not set. Use set_strategy() to set the strategy.")  
+        if self.strategy_name == "KAFAL":
+            return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples) 
+        else:
+            # These strategies do not require the model_server and c arguments
+            return self.sampler.select_samples(model, unlabeled_loader, unlabeled_set, num_samples)
     
