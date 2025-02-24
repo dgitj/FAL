@@ -63,7 +63,7 @@ if __name__ == "__main__":
 
     train_dataset = datasets.CIFAR10(data_dir, train=True, download=True, transform=transform)
 
-    num_clients = 80  # Number of partitions
+    num_clients = 100  # Number of partitions
     alpha = 0.1  # Dirichlet concentration parameter
 
     # Generate partitions
@@ -74,7 +74,7 @@ if __name__ == "__main__":
     print(f"Total assigned samples: {total_samples}")  # Should print 50000
 
     # Save to JSON file
-    filename = "alpha0-1_cifar10_80clients.json"
+    filename = f"distribution/alpha0-1_cifar10_{num_clients}clients.json"
     with open(filename, "w") as json_file:
         json.dump(partitioned_data, json_file, indent=4)
 
