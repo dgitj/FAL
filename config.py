@@ -10,6 +10,7 @@ DATA_ROOT = 'data/cifar-10-batches-py'
 # - "BADGE"
 # - "Random"
 # - "Noise"
+# - "FEAL"
 
 
 ACTIVE_LEARNING_STRATEGY = "Noise"
