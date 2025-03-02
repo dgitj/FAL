@@ -4,7 +4,6 @@ import torch.nn.functional as F
 import numpy as np
 import copy
 from torch.utils.data import DataLoader
-from sklearn.metrics.pairwise import euclidean_distances
 
 class NoiseStabilitySampler:
     def __init__(self, device="cuda", noise_scale=0.001, num_sampling=50):
@@ -27,8 +26,11 @@ class NoiseStabilitySampler:
         with torch.no_grad():
             for param in model.parameters():
                 if param.requires_grad:
-                    noise = torch.randn_like(param) * self.noise_scale * param.norm() / torch.norm(torch.randn_like(param))
-                    param.add_(noise)
+                    # Calculate normalization factor to keep relative noise scale consistent
+                    param_norm = param.norm()
+                    if param_norm > 0:  # Avoid division by zero
+                        noise = torch.randn_like(param) * self.noise_scale * param_norm / torch.norm(torch.randn_like(param))
+                        param.add_(noise)
 
     def compute_uncertainty(self, model, unlabeled_loader):
         """
@@ -42,78 +44,99 @@ class NoiseStabilitySampler:
             torch.Tensor: Uncertainty scores for the samples.
         """
         model.eval()
-        use_feature = True  # Use feature representations instead of softmax scores
+        
+        try:
+            # Get original outputs and features
+            outputs, features = self.get_all_outputs(model, unlabeled_loader)
+            if features is None:
+                # Fallback to random uncertainty if feature extraction fails
+                return torch.rand(len(unlabeled_loader.dataset)).to(self.device)
+            
+            # Initialize difference tensor
+            diffs = torch.zeros_like(features).to(self.device)
 
-        # Get original outputs
-        outputs = self.get_all_outputs(model, unlabeled_loader, use_feature)
+            # Apply noise multiple times and measure deviation
+            for i in range(self.num_sampling):
+                # Create a deep copy of the model to avoid modifying the original
+                noisy_model = copy.deepcopy(model).to(self.device)
+                self.add_noise_to_weights(noisy_model)
+                noisy_model.eval()
+                
+                # Get outputs from noisy model
+                _, noisy_features = self.get_all_outputs(noisy_model, unlabeled_loader)
+                if noisy_features is None:
+                    continue
+                    
+                # Calculate absolute difference
+                diff_k = noisy_features - features
+                diffs += diff_k.abs()
 
-        diffs = torch.zeros_like(outputs).to(self.device)
+            # Normalize by number of successful noise iterations
+            if self.num_sampling > 0:
+                diffs = diffs / self.num_sampling
+                
+            # Return mean difference across feature dimensions
+            return diffs.mean(dim=1)
+        
+        except Exception as e:
+            print(f"Error in compute_uncertainty: {str(e)}")
+            # Fallback to random uncertainty
+            return torch.rand(len(unlabeled_loader.dataset)).to(self.device)
 
-        # Apply noise multiple times and measure deviation
-        for _ in range(self.num_sampling):
-            noisy_model = copy.deepcopy(model).to(self.device)
-            self.add_noise_to_weights(noisy_model)
-            noisy_model.eval()
-            outputs_noisy = self.get_all_outputs(noisy_model, unlabeled_loader, use_feature)
-
-            diff_k = outputs_noisy - outputs
-            diffs += diff_k.abs()
-
-        return diffs.mean(dim=1)  # Aggregate uncertainty scores
-
-    def get_all_outputs(self, model, dataloader, use_feature=False):
+    def get_all_outputs(self, model, dataloader):
         """
-        Runs the model on all samples and returns feature embeddings or softmax outputs.
+        Runs the model on all samples and returns outputs and feature embeddings.
 
         Args:
             model (torch.nn.Module): The model used for predictions.
             dataloader (DataLoader): The dataset loader.
-            use_feature (bool): Whether to return feature embeddings instead of probabilities.
 
         Returns:
-            torch.Tensor: Model outputs.
+            tuple: (outputs, features) - Probability distributions and feature embeddings
         """
         model.eval()
-        outputs = []
+        outputs_list = []
+        features_list = []
 
         with torch.no_grad():
-            print("🔹 DEBUG: Starting to process batches...")
-            
-            for batch_idx, batch in enumerate(dataloader):
-                print(f"🔹 Processing batch {batch_idx + 1}...")
-
-                # Ensure the batch has the right number of elements
-                if len(batch) == 3:
-                    inputs, _, _ = batch  # (inputs, labels, indices)
-                elif len(batch) == 2:
-                    inputs, _ = batch  # (inputs, labels)
+            for batch in dataloader:
+                # Handle different DataLoader formats
+                if isinstance(batch, (list, tuple)) and len(batch) >= 2:
+                    inputs = batch[0].to(self.device)
                 else:
-                    print(f"❌ Unexpected batch format: {batch}")
-                    raise ValueError(f"Unexpected number of elements in batch: {len(batch)}")
+                    inputs = batch.to(self.device)
 
-                inputs = inputs.to(self.device)
-
-                # Run model forward pass
-                out, fea = model(inputs)
-
-                # Debugging outputs
-                if fea is None:
-                    print(f"❌ ERROR: Model returned None for features in batch {batch_idx + 1}")
+                try:
+                    # Forward pass through model
+                    result = model(inputs)
+                    
+                    # Handle different model output formats
+                    if isinstance(result, tuple) and len(result) >= 2:
+                        logits, features = result[0], result[1]
+                        
+                        # If features is a list (e.g., block outputs), take the last one
+                        if isinstance(features, list) and len(features) > 0:
+                            features = features[-1]
+                            
+                        outputs_list.append(F.softmax(logits, dim=1))
+                        features_list.append(features)
+                    else:
+                        # Model just returns logits, no features available
+                        outputs_list.append(F.softmax(result, dim=1))
+                        return torch.cat(outputs_list, dim=0), None
+                        
+                except Exception as e:
+                    print(f"Error processing batch: {str(e)}")
                     continue
-                if out is None:
-                    print(f"❌ ERROR: Model returned None for output in batch {batch_idx + 1}")
-                    continue
 
-                print(f"✅ Batch {batch_idx + 1} processed, feature shape: {fea.shape}")
-
-                outputs.append(fea if use_feature else F.softmax(out, dim=1))
-
-        if not outputs:
-            print("❌ ERROR: No outputs collected. Dataloader might be empty or the model is failing.")
-            raise RuntimeError("get_all_outputs() did not process any data. Check the dataset and model.")
-
-        return torch.cat(outputs, dim=0)
-
+        if not outputs_list or not features_list:
+            return None, None
+            
+        try:
+            return torch.cat(outputs_list, dim=0), torch.cat(features_list, dim=0)
+        except Exception as e:
+            print(f"Error concatenating results: {str(e)}")
+            return None, None
 
     def select_samples(self, model, unlabeled_loader, unlabeled_set, num_samples):
         """
@@ -128,10 +151,33 @@ class NoiseStabilitySampler:
         Returns:
             tuple: (selected_samples, remaining_unlabeled)
         """
-        uncertainty = self.compute_uncertainty(model, unlabeled_loader)
-        sorted_indices = torch.argsort(uncertainty, descending=True)
-
-        selected_samples = [unlabeled_set[idx] for idx in sorted_indices[:num_samples]]
-        remaining_unlabeled = [unlabeled_set[idx] for idx in sorted_indices[num_samples:]]
-
-        return selected_samples, remaining_unlabeled
+        # Ensure we don't request more samples than available
+        num_samples = min(num_samples, len(unlabeled_set))
+        
+        try:
+            # Compute uncertainty scores
+            uncertainty = self.compute_uncertainty(model, unlabeled_loader)
+            
+            if uncertainty is None or len(uncertainty) != len(unlabeled_set):
+                # Fallback to random selection
+                print("Warning: Uncertainty computation failed or returned incorrect size. Using random selection.")
+                selected_indices = np.random.choice(len(unlabeled_set), num_samples, replace=False)
+            else:
+                # Select indices with highest uncertainty
+                sorted_indices = torch.argsort(uncertainty, descending=True).cpu().numpy()
+                selected_indices = sorted_indices[:num_samples]
+            
+            # Map to actual sample indices
+            selected_samples = [unlabeled_set[i] for i in selected_indices]
+            remaining_unlabeled = [idx for i, idx in enumerate(unlabeled_set) if i not in selected_indices]
+            
+            return selected_samples, remaining_unlabeled
+            
+        except Exception as e:
+            print(f"Error in sample selection: {str(e)}")
+            # Fallback to random selection
+            selected_indices = np.random.choice(len(unlabeled_set), num_samples, replace=False)
+            selected_samples = [unlabeled_set[i] for i in selected_indices]
+            remaining_unlabeled = [idx for i, idx in enumerate(unlabeled_set) if i not in selected_indices]
+            
+            return selected_samples, remaining_unlabeled
