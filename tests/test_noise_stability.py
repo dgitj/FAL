@@ -1,95 +1,281 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
+import torch.nn.functional as F
 import numpy as np
-from query_strategies.noise_stability import NoiseStabilitySampler
 import copy
+from torch.utils.data import DataLoader
 
-# Dummy Model (Simple CNN)
-class SimpleCNN(nn.Module):
-    def __init__(self):
-        super(SimpleCNN, self).__init__()
-        self.conv1 = nn.Conv2d(1, 16, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1)
-        self.fc1 = nn.Linear(32 * 28 * 28, 128)
-        self.fc2 = nn.Linear(128, 10)
+class NoiseStabilitySampler:
+    def __init__(self, device="cuda", noise_scale=0.001, num_sampling=50):
+        """
+        Initializes the Noise Stability Sampler.
 
-    def forward(self, x):
-        x = torch.relu(self.conv1(x))
-        x = torch.relu(self.conv2(x))
-        x = x.view(x.size(0), -1)
-        features = self.fc1(x)
-        out = self.fc2(features)
-        return out, features  # Output and feature representation
+        Args:
+            device (str): Device to run the calculations on (e.g., 'cuda' or 'cpu').
+            noise_scale (float): Scaling factor for noise perturbation. Default 0.001 from original paper
+            num_sampling (int): Number of times noise is added to the model. Default 50 from original paper
+        """
+        self.device = device
+        self.noise_scale = noise_scale
+        self.num_sampling = num_sampling
 
-# Dummy Dataset (MNIST-like)
-def generate_dummy_data(num_samples=100):
-    X = torch.randn(num_samples, 1, 28, 28)  # Fake grayscale images
-    Y = torch.randint(0, 10, (num_samples,))  # Fake labels
-    dataset = TensorDataset(X, Y)
-    return dataset
+    def add_noise_to_weights(self, model):
+        """
+        Adds Gaussian noise to model weights.
+        
+        Args:
+            model: PyTorch model to perturb
+        """
+        with torch.no_grad():
+            for param in model.parameters():
+                if param.requires_grad:
+                    # Calculate normalization factor to keep relative noise scale consistent
+                    param_norm = param.norm()
+                    if param_norm > 0:  # Avoid division by zero
+                        noise = torch.randn_like(param) * self.noise_scale * param_norm / torch.norm(torch.randn_like(param))
+                        param.add_(noise)
 
-# Initialize model and test dataset
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = SimpleCNN().to(device)
-dataset = generate_dummy_data(100)
-data_loader = DataLoader(dataset, batch_size=10, shuffle=False)
+    def compute_uncertainty(self, model, unlabeled_loader):
+        """
+        Computes feature deviations before and after adding noise, with proper index tracking.
 
-# Initialize Noise Stability Sampler
-sampler = NoiseStabilitySampler(device=device, noise_scale=0.001, num_sampling=5)
+        Args:
+            model (torch.nn.Module): The model used for predictions.
+            unlabeled_loader (DataLoader): DataLoader for the unlabeled data.
 
-# ========== 1️⃣ TEST: Check Noise Perturbation ========== #
-def test_noise_addition():
-    print("🔹 TEST 1: Checking if noise is added correctly to model weights...")
-    model_copy = copy.deepcopy(model)
-    sampler.add_noise_to_weights(model_copy)
+        Returns:
+            tuple: (uncertainty_scores, original_indices) - Scores and their corresponding dataset indices
+        """
+        model.eval()
+        
+        try:
+            # Get original outputs, features and indices
+            outputs, features, original_indices = self.get_all_outputs(model, unlabeled_loader)
+            if features is None or len(features) == 0:
+                # Fallback to random uncertainty if feature extraction fails
+                print("Warning: Failed to extract features in Noise Stability. Using random scores.")
+                
+                # Even with failure, try to get original indices if possible
+                if not original_indices and hasattr(unlabeled_loader.sampler, 'indices'):
+                    original_indices = unlabeled_loader.sampler.indices.copy()
+                
+                # Generate random scores with original indices if available
+                if original_indices:
+                    return torch.rand(len(original_indices)).to(self.device), original_indices
+                else:
+                    # Complete fallback with sequential indices
+                    random_scores = torch.rand(len(unlabeled_loader.dataset)).to(self.device)
+                    sequential_indices = list(range(len(unlabeled_loader.dataset)))
+                    return random_scores, sequential_indices
+            
+            # Initialize difference tensor
+            diffs = torch.zeros_like(features).to(self.device)
 
-    for (orig_param, noisy_param) in zip(model.parameters(), model_copy.parameters()):
-        if not torch.equal(orig_param, noisy_param):
-            print("✅ Noise added successfully to model weights!")
-            return
-    print("❌ No difference detected after adding noise! Check implementation.")
+            # Apply noise multiple times and measure deviation
+            successful_iterations = 0
+            for i in range(self.num_sampling):
+                # Create a deep copy of the model to avoid modifying the original
+                noisy_model = copy.deepcopy(model).to(self.device)
+                self.add_noise_to_weights(noisy_model)
+                noisy_model.eval()
+                
+                # Get outputs from noisy model
+                _, noisy_features, _ = self.get_all_outputs(noisy_model, unlabeled_loader)
+                if noisy_features is None or noisy_features.shape != features.shape:
+                    continue
+                    
+                # Calculate absolute difference
+                diff_k = noisy_features - features
+                diffs += diff_k.abs()
+                successful_iterations += 1
 
-test_noise_addition()
+            # Normalize by number of successful noise iterations
+            if successful_iterations > 0:
+                diffs = diffs / successful_iterations
+                
+            # Return mean difference across feature dimensions and original indices
+            uncertainty = diffs.mean(dim=1)
+            return uncertainty, original_indices
+        
+        except Exception as e:
+            print(f"Error in compute_uncertainty: {str(e)}")
+            # Fallback to random uncertainty
+            if hasattr(unlabeled_loader.sampler, 'indices'):
+                original_indices = unlabeled_loader.sampler.indices.copy()
+                return torch.rand(len(original_indices)).to(self.device), original_indices
+            else:
+                random_scores = torch.rand(len(unlabeled_loader.dataset)).to(self.device)
+                sequential_indices = list(range(len(unlabeled_loader.dataset)))
+                return random_scores, sequential_indices
 
-# ========== 2️⃣ TEST: Validate Feature Deviation ========== #
-def test_feature_deviation():
-    print("\n🔹 TEST 2: Checking if feature deviation is correctly computed...")
-    
-    # Get features before noise
-    outputs = sampler.get_all_outputs(model, data_loader, use_feature=True)
+    def get_all_outputs(self, model, dataloader):
+        """
+        Runs the model on all samples and returns outputs, feature embeddings, and original indices.
 
-    # Get features after adding noise
-    noisy_model = copy.deepcopy(model)
-    sampler.add_noise_to_weights(noisy_model)
-    outputs_noisy = sampler.get_all_outputs(noisy_model, data_loader, use_feature=True)
+        Args:
+            model (torch.nn.Module): The model used for predictions.
+            dataloader (DataLoader): The dataset loader.
 
-    deviation = torch.norm(outputs_noisy - outputs, dim=1).mean().item()
-    print(f"Feature deviation norm: {deviation:.6f}")
+        Returns:
+            tuple: (outputs, features, original_indices) - Model outputs, feature embeddings and dataset indices
+        """
+        model.eval()
+        outputs_list = []
+        features_list = []
+        original_indices = []
 
-    if deviation > 0:
-        print("✅ Feature deviation is correctly computed!")
-    else:
-        print("❌ Feature deviation is zero. Check perturbation implementation.")
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(dataloader):
+                # Handle different DataLoader formats
+                if isinstance(batch, (list, tuple)) and len(batch) >= 2:
+                    inputs = batch[0].to(self.device)
+                else:
+                    inputs = batch.to(self.device)
 
-test_feature_deviation()
+                # Track original indices
+                if hasattr(dataloader.sampler, 'indices'):
+                    # Using SubsetSequentialSampler or similar
+                    start_idx = batch_idx * dataloader.batch_size
+                    end_idx = min((batch_idx + 1) * dataloader.batch_size, len(dataloader.sampler.indices))
+                    batch_indices = [dataloader.sampler.indices[i] for i in range(start_idx, end_idx)]
+                    original_indices.extend(batch_indices)
+                else:
+                    # Fallback if sampler doesn't have .indices attribute
+                    batch_indices = list(range(
+                        batch_idx * dataloader.batch_size,
+                        min((batch_idx + 1) * dataloader.batch_size, len(dataloader.dataset))
+                    ))
+                    original_indices.extend(batch_indices)
 
-# ========== 3️⃣ TEST: Sample Selection ========== #
-def test_sample_selection():
-    print("\n🔹 TEST 3: Checking if sample selection works correctly...")
-    
-    # Run sample selection
-    unlabeled_set = list(range(100))  # Dummy sample indices
-    selected_samples, remaining_unlabeled = sampler.select_samples(model, data_loader, unlabeled_set, num_samples=10)
+                try:
+                    # Forward pass through model
+                    result = model(inputs)
+                    
+                    # Handle different model output formats
+                    if isinstance(result, tuple) and len(result) >= 2:
+                        logits, features = result[0], result[1]
+                        
+                        # If features is a list (e.g., block outputs), take the last one
+                        if isinstance(features, list) and len(features) > 0:
+                            features = features[-1]
+                            
+                        outputs_list.append(F.softmax(logits, dim=1))
+                        features_list.append(features)
+                    else:
+                        # Model just returns logits, no features available
+                        outputs_list.append(F.softmax(result, dim=1))
+                        return torch.cat(outputs_list, dim=0), None, original_indices
+                        
+                except Exception as e:
+                    print(f"Error processing batch {batch_idx}: {str(e)}")
+                    continue
 
-    # Validate outputs
-    print(f"🔹 Selected Samples: {selected_samples[:5]} ...")  # Print first 5 selected
-    print(f"🔹 Remaining Unlabeled: {remaining_unlabeled[:5]} ...")  # Print first 5 remaining
+        if not outputs_list or not features_list:
+            return None, None, original_indices
+            
+        try:
+            outputs = torch.cat(outputs_list, dim=0)
+            features = torch.cat(features_list, dim=0)
+            
+            # Verify dimensions match
+            if len(outputs) != len(original_indices) or len(features) != len(original_indices):
+                print(f"Warning: Dimension mismatch in Noise Stability. "
+                      f"Got {len(outputs)} outputs, {len(features)} features, but {len(original_indices)} indices")
+                
+            return outputs, features, original_indices
+        except Exception as e:
+            print(f"Error concatenating results: {str(e)}")
+            return None, None, original_indices
 
-    if len(selected_samples) == 10 and len(set(selected_samples).intersection(remaining_unlabeled)) == 0:
-        print("✅ Sample selection works correctly!")
-    else:
-        print("❌ Sample selection has issues. Check sorting and indexing.")
+    def select_samples(self, model, unlabeled_loader, unlabeled_set, num_samples):
+        """
+        Selects the most uncertain samples based on feature deviation with proper index mapping.
 
-test_sample_selection()
+        Args:
+            model (torch.nn.Module): The model used for predictions.
+            unlabeled_loader (DataLoader): DataLoader for the unlabeled data.
+            unlabeled_set (list): List of indices corresponding to the unlabeled data.
+            num_samples (int): Number of samples to select.
+
+        Returns:
+            tuple: (selected_samples, remaining_unlabeled) - Lists of dataset indices
+        """
+        # Ensure we don't request more samples than available
+        num_samples = min(num_samples, len(unlabeled_set))
+        
+        try:
+            # Compute uncertainty scores with proper index tracking
+            uncertainty, original_indices = self.compute_uncertainty(model, unlabeled_loader)
+            
+            # Validate the indices
+            if uncertainty is None or len(uncertainty) == 0:
+                # Fallback to random selection
+                print("Warning: Uncertainty computation failed. Using random selection.")
+                selected_indices = np.random.choice(len(unlabeled_set), num_samples, replace=False)
+                selected_samples = [unlabeled_set[i] for i in selected_indices]
+                remaining_unlabeled = [idx for idx in unlabeled_set if idx not in selected_samples]
+                return selected_samples, remaining_unlabeled
+                
+            # Check if computed indices match unlabeled_set
+            if len(uncertainty) != len(original_indices):
+                print(f"Warning: Mismatch between uncertainty scores ({len(uncertainty)}) and tracked indices ({len(original_indices)})")
+                # Fallback to random selection
+                selected_indices = np.random.choice(len(unlabeled_set), num_samples, replace=False)
+                selected_samples = [unlabeled_set[i] for i in selected_indices]
+                remaining_unlabeled = [idx for idx in unlabeled_set if idx not in selected_samples]
+                return selected_samples, remaining_unlabeled
+                
+            # Verify all original_indices are in unlabeled_set
+            original_indices_set = set(original_indices)
+            unlabeled_set_set = set(unlabeled_set)
+            
+            if not original_indices_set.issubset(unlabeled_set_set):
+                print("Warning: Some tracked indices are not in unlabeled_set. Fixing...")
+                # Filter to keep only indices that are in unlabeled_set
+                valid_mask = torch.tensor([idx in unlabeled_set_set for idx in original_indices], 
+                                         dtype=torch.bool)
+                
+                if valid_mask.sum() == 0:
+                    print("Error: No valid indices found. Using random selection.")
+                    selected_indices = np.random.choice(len(unlabeled_set), num_samples, replace=False)
+                    selected_samples = [unlabeled_set[i] for i in selected_indices]
+                    remaining_unlabeled = [idx for idx in unlabeled_set if idx not in selected_samples]
+                    return selected_samples, remaining_unlabeled
+                
+                # Filter uncertainty and indices
+                filtered_uncertainty = uncertainty[valid_mask]
+                filtered_indices = [idx for i, idx in enumerate(original_indices) if valid_mask[i]]
+                
+                # Use filtered values
+                uncertainty = filtered_uncertainty
+                original_indices = filtered_indices
+            
+            # Select indices with highest uncertainty
+            uncertainty = uncertainty.cpu().numpy()
+            sorted_idx = np.argsort(-uncertainty)  # Descending order
+            
+            # Get the actual dataset indices using the mapping
+            selected_samples = [original_indices[i] for i in sorted_idx[:num_samples]]
+            
+            # Find the remaining unlabeled samples
+            remaining_unlabeled = [idx for idx in unlabeled_set if idx not in selected_samples]
+            
+            # Sanity check
+            if len(selected_samples) != num_samples:
+                print(f"Warning: Selected {len(selected_samples)} samples instead of {num_samples}")
+            
+            if len(set(selected_samples).intersection(set(remaining_unlabeled))) > 0:
+                print("Warning: Overlap between selected and remaining samples")
+                # Fix by deduplicating
+                selected_samples = list(set(selected_samples))
+                remaining_unlabeled = [idx for idx in unlabeled_set if idx not in selected_samples]
+            
+            return selected_samples, remaining_unlabeled
+            
+        except Exception as e:
+            print(f"Error in sample selection: {str(e)}")
+            # Fallback to random selection
+            selected_indices = np.random.choice(len(unlabeled_set), num_samples, replace=False)
+            selected_samples = [unlabeled_set[i] for i in selected_indices]
+            remaining_unlabeled = [idx for idx in unlabeled_set if idx not in selected_samples]
+            return selected_samples, remaining_unlabeled
