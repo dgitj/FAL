@@ -59,7 +59,11 @@ class EntropySampler:
             
         print(f"Entropy Variance: {np.var(entropy_scores)}")
         print(f"Entropy Min/Max/Mean: {np.min(entropy_scores):.4f}/{np.max(entropy_scores):.4f}/{np.mean(entropy_scores):.4f}")
-                
+        
+        # 🔹 Debugging: Print sample probabilities & entropy
+        print(f"\n🔹 DEBUG: Sample probabilities (first batch):\n{probabilities[:5]}")
+        print(f"🔹 DEBUG: Sample entropy (first batch): {batch_entropy[:5]}")
+
         return entropy_scores
         
     def select_samples(self, model, unlabeled_loader, unlabeled_set, num_samples):

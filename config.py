@@ -9,15 +9,17 @@ DATA_ROOT = 'data/cifar-10-batches-py'
 # - "Entropy"
 # - "BADGE"
 # - "Random"
+# - "Noise"
 
-ACTIVE_LEARNING_STRATEGY = "Random"
+
+ACTIVE_LEARNING_STRATEGY = "Noise"
 
 
 # setting
 BUDGET  = 2500
 BASE = 5000
-EPOCH=20
-COMMUNICATION=25
+EPOCH=1
+COMMUNICATION=2
 CYCLES =6
 RATIO=0.8
 CLIENTS=10

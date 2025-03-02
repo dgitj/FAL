@@ -103,6 +103,7 @@ def read_data(dataloader):
 
 iters = 0
 
+"""
 def train_epoch_client_distil(selected_clients_id, models, criterion, optimizers, dataloaders, comm):
     global iters
 
@@ -160,7 +161,35 @@ def train_epoch_client_distil(selected_clients_id, models, criterion, optimizers
             # log
             if (iters % 1000 == 0):
                 print('loss: ', loss.item(), 'distil loss: ', distil_loss.item())
+"""
 
+def train_epoch_client_traditional(selected_clients_id, models, criterion, optimizers, dataloaders):
+    global iters
+
+    for c in selected_clients_id:
+        mod = models['clients'][c]
+        mod.train()
+        
+        for data in tqdm(dataloaders['train-private'][c], leave=False, total=len(dataloaders['train-private'][c])):
+            inputs = data[0].cuda()
+            labels = data[1].cuda()
+
+            # Forward pass
+            scores, _ = mod(inputs)
+            
+            # Standard cross-entropy loss without KCFU
+            loss = torch.sum(criterion(scores, labels)) / labels.size(0)
+            
+            # Backward and optimize
+            iters += 1
+            optimizers['clients'][c].zero_grad()
+            loss.backward()
+            optimizers['clients'][c].step()
+            
+            # Log occasionally
+            if (iters % 1000 == 0):
+                print('loss: ', loss.item())
+                
 
 def test(models, dataloaders, mode='test'):
     models['server'].eval()
@@ -200,7 +229,7 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs):
         # local updates
         start = time.time()
         for epoch in range(num_epochs):
-            train_epoch_client_distil(selected_clients_id, models, criterion, optimizers, dataloaders, com)
+            train_epoch_client_traditional(selected_clients_id, models, criterion, optimizers, dataloaders)
             for c in selected_clients_id:
                 schedulers['clients'][c].step() #changed order of optimizer and scheduler
             print(f'Epoch: {epoch + 1}/{num_epochs} | Communication round: {com + 1}/{COMMUNICATION} | Cycle: {cycle + 1}/{CYCLES}')    

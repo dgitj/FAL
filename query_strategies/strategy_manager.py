@@ -2,6 +2,7 @@ from query_strategies.kafal import KAFALSampler
 from query_strategies.entropy import EntropySampler
 from query_strategies.badge import BADGESampler
 from query_strategies.random import RandomSampler
+from query_strategies.noise_stability import NoiseStabilitySampler
 from config import ACTIVE_LEARNING_STRATEGY
 
 class StrategyManager:
@@ -21,6 +22,8 @@ class StrategyManager:
             return BADGESampler(self.device)
         elif strategy_name == "Random":
             return RandomSampler(self.device)
+        elif strategy_name == "Noise":
+            return NoiseStabilitySampler(self.device)
         else:
             raise ValueError(f"Invalid strategy name: {strategy_name}")
         
