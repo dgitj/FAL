@@ -27,7 +27,7 @@ class StrategyManager:
         elif strategy_name == "Noise":
             return NoiseStabilitySampler(self.device)
         elif strategy_name == "FEAL":
-            return FEALSampler(self.device)
+            return FEALSampler(self.device, n_neighbor=5, cosine=0.85)
         else:
             raise ValueError(f"Invalid strategy name: {strategy_name}")
         
