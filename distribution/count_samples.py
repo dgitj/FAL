@@ -1,7 +1,7 @@
 import json
 
 # Load the JSON file
-with open("test_alpha0-1_cifar10_10clients.json", "r") as file:
+with open("alpha0-1_cifar10_10clients.json", "r") as file:
     data_splits = json.load(file)
 
 # Count the number of samples in each sublist (each client)
