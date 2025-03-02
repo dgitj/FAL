@@ -6,11 +6,14 @@ from torchmetrics.functional.pairwise import pairwise_cosine_similarity
 
 
 class FEALSampler:
-    def __init__(self, device="cuda"):
+    def __init__(self, device="cuda", n_neighbor=5, cosine=0.85):
         """
         Initializes the Federated Evidential Active Learning (FEAL) sampler.
         """
         self.device = device
+        self.n_neighbor = n_neighbor
+        self.cosine = cosine
+
 
     def compute_discrepancy(self, global_model, local_model, unlabeled_loader):
         """
@@ -59,7 +62,7 @@ class FEALSampler:
 
         return g_u_data_list, l_u_data_list, g_u_dis_list, l_feature_list
 
-    def relaxation(self, u_rank_arg, l_feature_list, neighbor_num, query_num, unlabeled_len, cosine=0.85):
+    def relaxation(self, u_rank_arg, l_feature_list, neighbor_num, query_num, unlabeled_len):
         """
         Ensures diversity in selected samples via neighbor checking.
         """
@@ -82,7 +85,7 @@ class FEALSampler:
         rank_arg = remain_idx + chosen_idx
         return rank_arg
 
-    def select_samples(self, global_model, local_model, unlabeled_loader, unlabeled_set, num_samples, args):
+    def select_samples(self, global_model, local_model, unlabeled_loader, unlabeled_set, num_samples):
         """
         Selects samples with FEAL strategy.
 
