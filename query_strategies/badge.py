@@ -11,7 +11,7 @@ class BADGESampler:
             device (str): Device to run the calculations on (e.g., 'cuda' or 'cpu').
         """
         self.device = device
-        
+
     def compute_gradient_embeddings(self, model, unlabeled_loader):
             model.eval()  # Set model to evaluation mode
             gradients = []
@@ -50,7 +50,6 @@ class BADGESampler:
             return gradients, data_indices
 
 
-        
     def select_samples(self, model, unlabeled_loader, unlabeled_set, num_samples):
         """
         Selects samples using BADGE sampling strategy.
