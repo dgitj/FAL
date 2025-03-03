@@ -103,7 +103,6 @@ class StrategyManager:
             # Entropy just needs the local model
             return self.sampler.select_samples(model, unlabeled_loader, unlabeled_set, num_samples)
         elif self.strategy_name == "Random":
-            # Random doesn't actually need the model, but we keep the interface consistent
             return self.sampler.select_samples(model, unlabeled_loader, unlabeled_set, num_samples)
         elif self.strategy_name == "LOGO":
             return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples)
