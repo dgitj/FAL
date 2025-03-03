@@ -60,7 +60,9 @@ class StrategyManager:
                 n_neighbor=5,   # Default from paper implementation
                 cosine=0.85     # Default from paper implementation
             )
-            
+        elif strategy_name == "LOGO":
+            return LoGoSampler(self.device)
+
         else:
             raise ValueError(f"Invalid strategy name: {strategy_name}")
             
