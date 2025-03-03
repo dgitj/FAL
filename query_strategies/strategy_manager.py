@@ -4,6 +4,7 @@ from query_strategies.badge import BADGESampler
 from query_strategies.random import RandomSampler
 from query_strategies.noise_stability import NoiseStabilitySampler
 from query_strategies.feal import FEALSampler
+from query_strategies.logo import LoGoSampler
 
 from config import ACTIVE_LEARNING_STRATEGY
 
@@ -89,13 +90,7 @@ class StrategyManager:
             return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples) 
         elif self.strategy_name == "FEAL":
             # FEAL needs both global and local models for discrepancy
-            return self.sampler.select_samples(
-                global_model=model_server,
-                local_model=model,
-                unlabeled_loader=unlabeled_loader,
-                unlabeled_set=unlabeled_set,
-                num_samples=num_samples
-            ) 
+            return self.sampler.select_samples(global_model=model_server, local_model=model, unlabeled_loader=unlabeled_loader, unlabeled_set=unlabeled_set, num_samples=num_samples) 
         elif self.strategy_name == "Noise":
             # NoiseStability just needs the local model
             return self.sampler.select_samples(model, unlabeled_loader, unlabeled_set, num_samples)
@@ -108,5 +103,7 @@ class StrategyManager:
         elif self.strategy_name == "Random":
             # Random doesn't actually need the model, but we keep the interface consistent
             return self.sampler.select_samples(model, unlabeled_loader, unlabeled_set, num_samples)
+        elif self.strategy_name == "LOGO":
+            return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples)
         else:
             raise ValueError(f"Unknown strategy: {self.strategy_name}")
