@@ -15,78 +15,166 @@ class LoGoSampler:
 
     def extract_embeddings(self, model, unlabeled_loader):
         """
-        Extracts feature embeddings from the local model.
+        Extracts feature embeddings from the local model with robust index tracking.
 
         Args:
             model (torch.nn.Module): Local model.
             unlabeled_loader (DataLoader): DataLoader for unlabeled data.
 
         Returns:
-            torch.Tensor: All embeddings concatenated.
+            tuple: (embeddings, original_indices) - Feature embeddings and their corresponding dataset indices.
         """
         model.eval()
         embeddings = []
+        original_indices = []
 
         with torch.no_grad():
-            for inputs, _ in unlabeled_loader:
+            for batch_idx, (inputs, _) in enumerate(unlabeled_loader):
+                # Track original indices
+                if hasattr(unlabeled_loader.sampler, 'indices'):
+                    # If using SubsetSequentialSampler or similar
+                    start_idx = batch_idx * unlabeled_loader.batch_size
+                    end_idx = min((batch_idx + 1) * unlabeled_loader.batch_size, 
+                                  len(unlabeled_loader.sampler.indices))
+                    batch_indices = [unlabeled_loader.sampler.indices[i] for i in range(start_idx, end_idx)]
+                else:
+                    # Fallback if sampler doesn't have .indices attribute
+                    batch_indices = list(range(
+                        batch_idx * unlabeled_loader.batch_size,
+                        min((batch_idx + 1) * unlabeled_loader.batch_size, len(unlabeled_loader.dataset))
+                    ))
+                
+                # Extract features
                 inputs = inputs.to(self.device)
-                _, features = model(inputs)
-                embeddings.append(features.cpu())
+                try:
+                    outputs = model(inputs)
+                    if isinstance(outputs, tuple):
+                        _, features = outputs
+                        # Handle features if it's a list (e.g., layer outputs)
+                        if isinstance(features, list):
+                            features = features[-1]  # Use the last layer features
+                    else:
+                        # If model doesn't return features, it's not compatible
+                        raise ValueError("Model output format not compatible with LoGo")
+                    
+                    # Store embeddings and corresponding indices
+                    embeddings.append(features.cpu())
+                    original_indices.extend(batch_indices)
+                except Exception as e:
+                    print(f"Error extracting embeddings: {str(e)}")
+                    # Skip this batch if extraction fails
+                    continue
 
-        return torch.cat(embeddings, dim=0)
+        if len(embeddings) == 0:
+            error_msg = "No valid embeddings extracted"
+            print(error_msg)
+            raise ValueError(error_msg)
 
-    def macro_micro_clustering(self, model_server, unlabeled_loader, unlabeled_set, embeddings, num_samples):
+        # Ensure embeddings match indices
+        try:
+            all_embeddings = torch.cat(embeddings, dim=0)
+            if len(all_embeddings) != len(original_indices):
+                print(f"Warning: Embedding count ({len(all_embeddings)}) doesn't match index count ({len(original_indices)})")
+                # Truncate to shorter length
+                min_len = min(len(all_embeddings), len(original_indices))
+                all_embeddings = all_embeddings[:min_len]
+                original_indices = original_indices[:min_len]
+            
+            return all_embeddings, original_indices
+        except Exception as e:
+            print(f"Error concatenating embeddings: {str(e)}")
+            error_msg = f"Error concatenating embeddings: {str(e)}"
+            print(error_msg)
+            raise RuntimeError(error_msg) from e
+
+    def macro_micro_clustering(self, model_server, unlabeled_loader, embeddings, original_indices, num_samples):
         """
         Performs LoGo's macro (clustering) and micro (uncertainty-based selection) steps.
 
         Args:
             model_server (torch.nn.Module): Global model.
             unlabeled_loader (DataLoader): Full unlabeled DataLoader.
-            unlabeled_set (list): Indices of the unlabeled data.
-            embeddings (torch.Tensor): Feature embeddings from the local model.
+            embeddings (torch.Tensor): Feature embeddings.
+            original_indices (list): Original dataset indices corresponding to embeddings.
             num_samples (int): Number of samples to select.
 
         Returns:
             list: Selected sample indices.
         """
-        # Macro step: K-Means clustering
-        kmeans = KMeans(n_clusters=num_samples, random_state=0)
-        cluster_labels = kmeans.fit_predict(embeddings.numpy())
-
-        # Group indices by cluster
-        cluster_dict = {i: [] for i in range(num_samples)}
-        for idx, cluster_id in zip(unlabeled_set, cluster_labels):
-            cluster_dict[cluster_id].append(idx)
-
-        # Micro step: Uncertainty-based selection within each cluster
-        selected_samples = []
-        for cluster_id, cluster_idxs in cluster_dict.items():
-            if not cluster_idxs:
-                continue
-
-            cluster_subset = torch.utils.data.Subset(unlabeled_loader.dataset, cluster_idxs)
-            cluster_loader = torch.utils.data.DataLoader(
-                cluster_subset, batch_size=64, shuffle=False
-            )
-
-            uncertainties = []
-            with torch.no_grad():
-                for inputs, _ in cluster_loader:
-                    inputs = inputs.to(self.device)
-                    outputs, _ = model_server(inputs)
-                    probs = torch.softmax(outputs, dim=1)
-                    log_probs = torch.log(probs + 1e-12)
-                    entropy = -torch.sum(probs * log_probs, dim=1)
-                    uncertainties.extend(entropy.cpu().numpy())
-
-            most_uncertain_idx = cluster_idxs[np.argmax(uncertainties)]
-            selected_samples.append(most_uncertain_idx)
-
-        return selected_samples
+        if len(embeddings) == 0 or not original_indices:
+            error_msg = "No embeddings or indices available for clustering in LoGo algorithm"
+            print(error_msg)
+            raise ValueError(error_msg)
+            
+        # Ensure we don't create more clusters than samples
+        num_clusters = min(num_samples, len(embeddings))
+        
+        try:
+            # Macro step: K-Means clustering
+            kmeans = KMeans(n_clusters=num_clusters, random_state=0, n_init=10)
+            cluster_labels = kmeans.fit_predict(embeddings.numpy())
+            
+            # Group samples by cluster
+            clusters = [[] for _ in range(num_clusters)]
+            for i, cluster_id in enumerate(cluster_labels):
+                clusters[cluster_id].append(original_indices[i])
+                
+            # Micro step: Calculate uncertainty for each cluster
+            selected_samples = []
+            model_server.eval()
+            
+            for cluster_indices in clusters:
+                if not cluster_indices:
+                    continue
+                    
+                # Create a loader for this cluster
+                cluster_subset = torch.utils.data.Subset(unlabeled_loader.dataset, cluster_indices)
+                cluster_loader = torch.utils.data.DataLoader(
+                    cluster_subset, 
+                    batch_size=min(32, len(cluster_indices)), 
+                    shuffle=False
+                )
+                
+                # Calculate uncertainty for each sample in the cluster
+                max_uncertainty = -float('inf')
+                most_uncertain_sample = None
+                sample_idx = 0
+                
+                with torch.no_grad():
+                    for inputs, _ in cluster_loader:
+                        inputs = inputs.to(self.device)
+                        
+                        # Get model outputs
+                        outputs = model_server(inputs)
+                        if isinstance(outputs, tuple):
+                            outputs = outputs[0]
+                        
+                        # Calculate entropy
+                        probs = F.softmax(outputs, dim=1)
+                        entropy = -torch.sum(probs * torch.log(probs + 1e-12), dim=1)
+                        
+                        # Find max entropy in this batch
+                        for i, uncertainty in enumerate(entropy):
+                            uncertainty_val = uncertainty.item()
+                            if uncertainty_val > max_uncertainty:
+                                max_uncertainty = uncertainty_val
+                                most_uncertain_sample = cluster_indices[sample_idx + i]
+                        
+                        sample_idx += inputs.size(0)
+                
+                if most_uncertain_sample is not None:
+                    selected_samples.append(most_uncertain_sample)
+            
+            return selected_samples
+            
+        except Exception as e:
+            error_msg = f"Error in LoGo clustering: {str(e)}"
+            print(error_msg)
+            raise RuntimeError(error_msg) from e
 
     def select_samples(self, model, model_server, unlabeled_loader, c, unlabeled_set, num_samples):
         """
-        Selects samples using the LoGo strategy.
+        Selects samples using the LoGo strategy with robust index tracking.
 
         Args:
             model (torch.nn.Module): Local model.
@@ -99,10 +187,56 @@ class LoGoSampler:
         Returns:
             tuple: Selected samples and remaining unlabeled samples.
         """
-        embeddings = self.extract_embeddings(model, unlabeled_loader)
-        selected_samples = self.macro_micro_clustering(
-            model_server, unlabeled_loader, unlabeled_set, embeddings, num_samples
-        )
-        remaining_unlabeled = list(set(unlabeled_set) - set(selected_samples))
-
-        return selected_samples, remaining_unlabeled
+        # Ensure we don't ask for more samples than available
+        num_samples = min(num_samples, len(unlabeled_set))
+        
+        try:
+            # Extract embeddings with robust index tracking
+            embeddings, original_indices = self.extract_embeddings(model, unlabeled_loader)
+            
+            if len(embeddings) == 0 or not original_indices:
+                error_msg = "Failed to extract embeddings for LoGo algorithm"
+                print(error_msg)
+                raise ValueError(error_msg)
+                
+            # Verify that all original_indices are in unlabeled_set
+            valid_indices = []
+            valid_embeddings = []
+            
+            for i, idx in enumerate(original_indices):
+                if idx in unlabeled_set:
+                    valid_indices.append(idx)
+                    valid_embeddings.append(embeddings[i])
+            
+            if not valid_indices:
+                error_msg = "No valid indices found in unlabeled_set for LoGo algorithm"
+                print(error_msg)
+                raise ValueError(error_msg)
+                
+            # Convert valid embeddings to tensor
+            if valid_embeddings:
+                valid_embeddings = torch.stack(valid_embeddings)
+                
+            # Perform clustering and uncertainty-based selection
+                selected_samples = self.macro_micro_clustering(
+                model_server, 
+                unlabeled_loader, 
+                valid_embeddings, 
+                valid_indices, 
+                num_samples
+            )
+            
+            # Check if we got enough samples
+            if len(selected_samples) < num_samples:
+                raise ValueError(f"LoGo algorithm could not select enough samples. Requested {num_samples}, but only found {len(selected_samples)}.")
+            
+            # Get remaining unlabeled samples
+            remaining_unlabeled = [idx for idx in unlabeled_set if idx not in selected_samples]
+            
+            return selected_samples, remaining_unlabeled
+            
+        except Exception as e:
+            # Re-raise the exception with more details
+            error_msg = f"Error in LoGo sample selection: {str(e)}"
+            print(error_msg)
+            raise RuntimeError(error_msg) from e
