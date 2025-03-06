@@ -31,7 +31,7 @@ class SubsetSequentialRandomSampler(torch.utils.data.Sampler):
         self.sequence = list(range(len(self.indices)))
 
     def __iter__(self):
-        np.random.seed(100)
+       # np.random.seed(100)
         np.random.shuffle(self.sequence)
         return (self.indices[i] for i in self.sequence)
 
