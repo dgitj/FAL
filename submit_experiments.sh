@@ -5,90 +5,109 @@
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
-#SBATCH --time=12:00:00
+#SBATCH --time=10:00:00
 #SBATCH --mem=64G
-#SBATCH --array=0-20%8
+#SBATCH --array=0-1%2
 #SBATCH --output=fal_array_%A_%a.out
 #SBATCH --error=fal_array_%A_%a.err
 
-# Load necessary modules
-module load devel/python/3.10.0_gnu_11.1
-module load cuda/12.1
+trap "kill $IO_MONITOR_PID" EXIT
+sleep 5
 
-# Activate virtual environment
-source ~/venvs/decal_env/bin/activate || { echo "Failed to activate virtual environment"; exit 1; }
+# Clean environment
+module purge
+module load devel/cuda/11.8
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate fal_env
+
+export PYTHONNOUSERSITE=1
+
+echo "============================================================"
+echo "Job running on node: $(hostname)"
+echo "Starting at: $(date)"
+echo "============================================================"
+
+nvidia-smi
+
+# Copy necessary files to $TMPDIR (fast local SSD)
+echo "Copying job files to \$TMPDIR..."
+cp -r $SLURM_SUBMIT_DIR/* $TMPDIR/
+
+# Set DATA_ROOT to use the dataset in $TMPDIR
+export DATA_ROOT=$TMPDIR/data
+
+# Move into working directory
+cd $TMPDIR
+
+# Start I/O monitoring in the background
+IO_LOG="io_monitor_${SLURM_ARRAY_TASK_ID}.log"
+(
+  while true; do
+    date >> $IO_LOG
+    for pid in $(pgrep -u $USER python); do
+      echo "PID $pid:" >> $IO_LOG
+      cat /proc/$pid/io >> $IO_LOG
+    done
+    sleep 10
+  done
+) &
+IO_MONITOR_PID=$!
 
 # Define experiment parameters
-STRATEGIES=("KAFAL" "Entropy" "BADGE" "Random" "FEAL" "LOGO" "Noise")
-CLIENT_COUNTS=(10 20 40)
+STRATEGIES=("KAFAL" "LOGO")
+CLIENT_COUNTS=(40)
 
-# Calculate which strategy and client count to use based on array index
-STRATEGY_IDX=$(( SLURM_ARRAY_TASK_ID / 3 ))
-CLIENT_IDX=$(( SLURM_ARRAY_TASK_ID % 3 ))
+STRATEGY_IDX=$(($SLURM_ARRAY_TASK_ID / ${#CLIENT_COUNTS[@]}))
+CLIENT_IDX=$(($SLURM_ARRAY_TASK_ID % ${#CLIENT_COUNTS[@]}))
 
-# Verify indices are within range
 if [ $STRATEGY_IDX -ge ${#STRATEGIES[@]} ]; then
     echo "Error: Strategy index $STRATEGY_IDX out of bounds"
     exit 1
 fi
-if [ $CLIENT_IDX -ge ${#CLIENT_COUNTS[@]} ]; then
-    echo "Error: Client count index $CLIENT_IDX out of bounds"
-    exit 1
-fi
 
-# Get the actual strategy and client count
 STRATEGY=${STRATEGIES[$STRATEGY_IDX]}
 CLIENTS=${CLIENT_COUNTS[$CLIENT_IDX]}
-
-# Create a unique experiment ID
 EXPERIMENT_ID="${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+LOG_FILE="experiment_${EXPERIMENT_ID}.log"
 
-# Print experiment details
+
 echo "============================================================"
 echo "Experiment ID: $EXPERIMENT_ID"
 echo "Running strategy: $STRATEGY with $CLIENTS clients"
-echo "Starting at: $(date)"
-echo "Node: $(hostname)"
 echo "============================================================"
 
-# Check GPU status
-echo "GPU information:"
-nvidia-smi
-
-# Run the experiment
-# Note: Fixed parameter names to match your script's expectations
 echo "Starting experiment..."
 python main_multiprocessing.py \
-  --strategies $STRATEGY \
+  --strategy $STRATEGY \
   --clients $CLIENTS \
-  --epoch 40 \
-  --communication 50 \
+  --epochs 40 \
+  --communication_rounds 50 >> "$LOG_FILE" 2>&1
 
-
-# Check if the experiment succeeded
 EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then
     echo "Error: Experiment failed with exit code $EXIT_CODE"
 fi
 
-# Create and populate results directory with unique ID
-RESULTS_DIR="${SLURM_SUBMIT_DIR}/results/${STRATEGY}_${CLIENTS}_${EXPERIMENT_ID}"
-mkdir -p $RESULTS_DIR || { echo "Failed to create results directory"; exit 1; }
+# Stop I/O monitoring
+kill $IO_MONITOR_PID
 
-# Look for result directories and copy them
+# Copy results back to $HOME only at the end
+RESULTS_DIR="${SLURM_SUBMIT_DIR}/results/${STRATEGY}/${CLIENTS}_clients/${EXPERIMENT_ID}"
+mkdir -p "$RESULTS_DIR"
+
+# Copy experiment results
 if [ -d "experiments" ]; then
-    cp -r experiments/* $RESULTS_DIR/ || { echo "Failed to copy results"; exit 1; }
+    cp -r experiments/* "$RESULTS_DIR"/ || { echo "Failed to copy results"; exit 1; }
     echo "Results copied to $RESULTS_DIR"
 else
-    echo "Warning: No experiments directory found"
-    # Check for results in current directory
-    if ls results_* 1> /dev/null 2>&1; then
-        cp -r results_* $RESULTS_DIR/ || { echo "Failed to copy results"; exit 1; }
-        echo "Results copied from current directory to $RESULTS_DIR"
-    fi
+    echo "Warning: No experiments directory found. No results copied."
 fi
 
-# Record completion time
+
+# Copy experiment log and I/O log
+cp "$LOG_FILE" "$RESULTS_DIR/" || echo "Warning: Failed to copy experiment log."
+cp "$IO_LOG" "$RESULTS_DIR/" || echo "Warning: Failed to copy I/O log."
+
 echo "============================================================"
 echo "Experiment completed at: $(date)"
 echo "Results stored in: $RESULTS_DIR"

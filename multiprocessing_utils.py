@@ -6,49 +6,35 @@ import os
 import time
 from functools import partial
 
-# Set start method for multiprocessing
-# 'spawn' is more compatible with CUDA but slower than 'fork'
-# 'fork' may cause issues with CUDA in some environments
-if __name__ == "__main__":
-    mp.set_start_method('spawn', force=True)
-
 def train_client(client_id, state_dict, unlabeled_set, criterion, 
                  optimizer_config, scheduler_config, dataloaders, 
                  num_epochs, device_id=None):
     """
     Worker function to train a single client in a separate process
-    
-    Args:
-        client_id: ID of the client to train
-        state_dict: Initial model state dictionary
-        unlabeled_set: List of unlabeled dataset indices
-        criterion: Loss function
-        optimizer_config: Configuration for optimizer (lr, momentum, etc.)
-        scheduler_config: Configuration for scheduler
-        dataloaders: Dict of dataloaders
-        num_epochs: Number of training epochs
-        device_id: GPU device ID to use (if None, use CPU)
-    
-    Returns:
-        dict: Contains trained model state dict, updated optimizer and scheduler states
     """
+
     # Set device for this process
-    if device_id is not None and torch.cuda.is_available():
-        device = torch.device(f"cuda:{device_id}")
+    if torch.cuda.is_available():
+        if device_id is not None:
+            device = torch.device(f"cuda:{device_id % torch.cuda.device_count()}")
+        else:
+            device = torch.device("cuda")
+        print(f"Worker {client_id} using {device} ({torch.cuda.get_device_name(device.index)})")
     else:
         device = torch.device("cpu")
+        print(f"Worker {client_id} using CPU (CUDA not available)")
     
+    # Ensure state dict is on CPU before loading
     cpu_state_dict = {}
     for key, tensor in state_dict.items():
         cpu_state_dict[key] = tensor.cpu() if isinstance(tensor, torch.Tensor) else tensor
-
 
     # Initialize model and load state
     import models.preact_resnet as resnet
     model = resnet.preact_resnet8_cifar(num_classes=10).to(device)
     model.load_state_dict(cpu_state_dict, strict=False)
     
-    # Initialize optimizer and scheduler
+    # Rest of your training code remains the same...
     optimizer = torch.optim.SGD(
         model.parameters(),
         lr=optimizer_config['lr'],
@@ -76,7 +62,7 @@ def train_client(client_id, state_dict, unlabeled_set, criterion,
         batch_size=batch_size,
         sampler=sampler,
         num_workers=0,  # Critical: No multiprocessing in worker process
-        pin_memory=True
+        pin_memory=True if torch.cuda.is_available() else False
     )
     
     # Training loop
@@ -94,7 +80,7 @@ def train_client(client_id, state_dict, unlabeled_set, criterion,
         
         scheduler.step()
     
-    # Return results
+    # Return results, moving tensors to CPU
     result = {
         'client_id': client_id,
         'state_dict': {k: v.cpu() if isinstance(v, torch.Tensor) else v 
@@ -102,8 +88,10 @@ def train_client(client_id, state_dict, unlabeled_set, criterion,
         'unlabeled_set': unlabeled_set.copy() if unlabeled_set else None
     }
 
+    # Clean up GPU memory
     model = model.cpu()
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     return result
 
@@ -111,25 +99,32 @@ def select_samples_worker(client_id, client_state_dict, server_state_dict, unlab
                           strategy_manager, num_samples, device_id=None):
     """
     Worker function to perform sample selection for a client
-    
-    Args:
-        client_id: ID of the client
-        client_state_dict: State dict of the client model
-        server_state_dict: State dict of the server model
-        unlabeled_set: List of unlabeled dataset indices
-        strategy_manager: Strategy manager instance
-        num_samples: Number of samples to select
-        device_id: GPU device ID to use (if None, use CPU)
-    
-    Returns:
-        dict: Contains selected samples and remaining unlabeled set
     """
+    # Force torch to re-evaluate CUDA availability in this process
+    
+    
     # Set device for this process
-    if device_id is not None and torch.cuda.is_available():
-        device = torch.device(f"cuda:{device_id}")
+    if torch.cuda.is_available():
+        if device_id is not None:
+            device = torch.device(f"cuda:{device_id % torch.cuda.device_count()}")
+        else:
+            device = torch.device("cuda")
+        print(f"Selection worker {client_id} using {device} ({torch.cuda.get_device_name(device.index)})")
     else:
         device = torch.device("cpu")
+        print(f"Selection worker {client_id} using CPU (CUDA not available)")
     
+    # Ensure state dicts are on CPU before loading
+    client_cpu_state_dict = {}
+    server_cpu_state_dict = {}
+    
+    for key, tensor in client_state_dict.items():
+        client_cpu_state_dict[key] = tensor.cpu() if isinstance(tensor, torch.Tensor) else tensor
+    
+    for key, tensor in server_state_dict.items():
+        server_cpu_state_dict[key] = tensor.cpu() if isinstance(tensor, torch.Tensor) else tensor
+    
+    # Rest of your code remains the same...
     # Load data
     from torchvision.datasets import CIFAR10
     import torchvision.transforms as T
@@ -141,8 +136,8 @@ def select_samples_worker(client_id, client_state_dict, server_state_dict, unlab
     client_model = resnet.preact_resnet8_cifar(num_classes=10).to(device)
     server_model = resnet.preact_resnet8_cifar(num_classes=10).to(device)
     
-    client_model.load_state_dict(client_state_dict, strict=False)
-    server_model.load_state_dict(server_state_dict, strict=False)
+    client_model.load_state_dict(client_cpu_state_dict, strict=False)
+    server_model.load_state_dict(server_cpu_state_dict, strict=False)
     
     # Create data loader for this client
     cifar10_select_transform = T.Compose([
@@ -157,7 +152,7 @@ def select_samples_worker(client_id, client_state_dict, server_state_dict, unlab
         cifar10_select, 
         batch_size=64,  # Adjust batch size as needed
         sampler=SubsetSequentialSampler(unlabeled_set),
-        pin_memory=True,
+        pin_memory=True if torch.cuda.is_available() else False,
         num_workers=0
     )
     
@@ -171,6 +166,12 @@ def select_samples_worker(client_id, client_state_dict, server_state_dict, unlab
         num_samples
     )
     
+    # Clean up GPU memory
+    client_model = client_model.cpu()
+    server_model = server_model.cpu()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
     # Return results
     result = {
         'client_id': client_id,
@@ -183,19 +184,6 @@ def parallel_train_clients(models, criterion, optimizers, schedulers, dataloader
                            selected_clients_id, num_epochs, num_processes=None):
     """
     Train multiple clients in parallel
-    
-    Args:
-        models: Dict containing client and server models
-        criterion: Loss function
-        optimizers: Dict containing optimizers for clients
-        schedulers: Dict containing schedulers for clients
-        dataloaders: Dict containing dataloaders
-        selected_clients_id: List of client IDs to train
-        num_epochs: Number of training epochs
-        num_processes: Number of parallel processes (if None, use CPU count)
-    
-    Returns:
-        dict: Updated models and optimizer states
     """
     if num_processes is None:
         num_processes = min(len(selected_clients_id), mp.cpu_count())
@@ -214,7 +202,7 @@ def parallel_train_clients(models, criterion, optimizers, schedulers, dataloader
                 {'milestones': [260]},
                 dataloaders,
                 num_epochs,
-                device_id=0
+                device_id=0 if torch.cuda.is_available() else None
             )
             results.append(result)
         return results
@@ -226,7 +214,7 @@ def parallel_train_clients(models, criterion, optimizers, schedulers, dataloader
     tasks = []
     for i, c in enumerate(selected_clients_id):
         # Distribute across available GPUs if multiple are available
-        device_id = i % torch.cuda.device_count() if torch.cuda.is_available() else None
+        device_id = i % max(1, torch.cuda.device_count()) if torch.cuda.is_available() else None
         
         task = pool.apply_async(
             train_client,
@@ -258,16 +246,6 @@ def parallel_select_samples(models, strategy_manager, unlabeled_set_list,
                             add, num_processes=None):
     """
     Perform sample selection for multiple clients in parallel
-    
-    Args:
-        models: Dict containing client and server models
-        strategy_manager: Strategy manager instance
-        unlabeled_set_list: List of unlabeled sets for each client
-        add: Number of samples to add for each client
-        num_processes: Number of parallel processes (if None, use CPU count)
-    
-    Returns:
-        list: List of results containing selected samples and remaining unlabeled sets
     """
     num_clients = len(models['clients'])
     
@@ -285,7 +263,7 @@ def parallel_select_samples(models, strategy_manager, unlabeled_set_list,
                 unlabeled_set_list[c],
                 strategy_manager,
                 add[c],
-                device_id=0
+                device_id=0 if torch.cuda.is_available() else None
             )
             results.append(result)
         return results
@@ -297,7 +275,7 @@ def parallel_select_samples(models, strategy_manager, unlabeled_set_list,
     tasks = []
     for i in range(num_clients):
         # Distribute across available GPUs if multiple are available
-        device_id = i % torch.cuda.device_count() if torch.cuda.is_available() else None
+        device_id = i % max(1, torch.cuda.device_count()) if torch.cuda.is_available() else None
         
         task = pool.apply_async(
             select_samples_worker,
