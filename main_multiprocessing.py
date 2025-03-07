@@ -15,29 +15,6 @@ import torch.nn.functional as F
 from torch.distributions import Beta
 import torch.multiprocessing as mp
 
-# Set multiprocessing start method early
-if __name__ == '__main__':
-    # 'spawn' is more reliable with CUDA
-    mp.set_start_method('spawn', force=True)
-
-
-# Set FAL parameters uses parameters from config.py if not explicitly changed
-import argparse
-import config
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--strategy", type=str, default=config.ACTIVE_LEARNING_STRATEGY)
-parser.add_argument("--clients", type=int, default=config.CLIENTS)
-parser.add_argument("--epochs", type=int, default=config.EPOCH)
-parser.add_argument("--communication_rounds", type=int, default=config.COMMUNICATION)
-args = parser.parse_args()
-
-ACTIVE_LEARNING_STRATEGY = args.strategy
-CLIENTS = args.clients
-EPOCH = args.epochs
-COMMUNICATION = args.communication_rounds
-
-
 
 # Device selection
 if torch.cuda.is_available():
@@ -48,8 +25,58 @@ else:
     device = torch.device("cpu")
 
 print(f"Using device: {device}")
-print(f"Number of available GPUs: {torch.cuda.device_count()}")
-print(f"Number of CPU cores: {mp.cpu_count()}")
+# print(f"Number of available GPUs: {torch.cuda.device_count()}")
+# print(f"Number of CPU cores: {mp.cpu_count()}")
+
+
+# Set multiprocessing start method early
+if __name__ == '__main__':
+    # 'spawn' is more reliable with CUDA
+    mp.set_start_method('spawn', force=True)
+
+
+# Set FAL parameters uses default parameters from KAFAL
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--strategy", type=str, default="LOGO")
+parser.add_argument("--clients", type=int, default=10)
+parser.add_argument("--epochs", type=int, default=40)
+parser.add_argument("--communication_rounds", type=int, default=50)
+parser.add_argument("--budget", type=int, default=2500)
+parser.add_argument("--base", type=int, default=5000)
+parser.add_argument("--trials", type=int, default=1)
+parser.add_argument("--ratio", type=float, default=0.8)
+parser.add_argument("--cycles", type=int, default=6)
+parser.add_argument("--lr", type=float, default=0.1)
+parser.add_argument("--milestones", type=int, nargs='+', default=[260])
+parser.add_argument("--num_train", type=int, default=50000)
+parser.add_argument("--wdecay", type=float, default=5e-4)
+parser.add_argument("--batch", type=int, default=128)
+parser.add_argument("--momentum", type=float, default=0.9)
+parser.add_argument("--beta", type=float, nargs=2, default=[2, 2])
+parser.add_argument("--data_root", type=str, default=os.getenv("DATA_ROOT", "data/cifar-10-batches-py"))
+#parser.add_argument("--data_root", type=str, default="data/cifar-10-batches-py")
+
+args = parser.parse_args()
+
+ACTIVE_LEARNING_STRATEGY = args.strategy
+CLIENTS = args.clients
+EPOCH = args.epochs
+COMMUNICATION = args.communication_rounds
+BUDGET = args.budget
+BASE = args.base
+TRIALS = args.trials
+RATIO = args.ratio
+CYCLES = args.cycles
+LR = args.lr
+MILESTONES = args.milestones
+NUM_TRAIN = args.num_train
+WDECAY = args.wdecay
+BATCH = args.batch
+MOMENTUM = args.momentum
+BETA = args.beta
+DATA_ROOT = args.data_root
 
 from query_strategies.strategy_manager import StrategyManager
 import models.preact_resnet as resnet
@@ -66,9 +93,6 @@ from multiprocessing_utils import (
     parallel_train_clients, 
     parallel_select_samples
 )
-
-# Configuration
-from config import *
 
 # Load data
 cifar10_train_transform = T.Compose([
@@ -112,14 +136,15 @@ def test(models, dataloaders, mode='test'):
 
     return 100 * correct / total
 
+    
 def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, num_processes=None):
-    print('>> Training with multiprocessing')
+    # print('>> Training with multiprocessing')
 
     overall_start = time.time()
     
     for com in range(COMMUNICATION):
         comm_start = time.time()
-        print(f"\n--- Starting Communication Round {com + 1}/{COMMUNICATION} ---")
+        # print(f"\n--- Starting Communication Round {com + 1}/{COMMUNICATION} ---")
         # Select clients 
         if com < COMMUNICATION-1:
             selected_clients_id = np.random.choice(CLIENTS, int(CLIENTS * RATIO), replace=False)
@@ -127,19 +152,27 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, nu
             selected_clients_id = range(CLIENTS)
 
         if num_processes is None:
-            import multiprocessing as mp
             actual_processes = min(len(selected_clients_id), mp.cpu_count())
         else:
             actual_processes = min(len(selected_clients_id), num_processes)
             
         print(f"Training {len(selected_clients_id)} clients in parallel with {actual_processes} processes")
+        # [ADDED] Display device info for debugging
+        # print(f"Using device: {device}, CUDA available: {torch.cuda.is_available()}")
 
-
-        server_state_dict = models['server'].state_dict()
+        # [CHANGED] Move server model to CPU before copying state dict
+        models['server'] = models['server'].cpu()  # [NEW]
+        server_state_dict = copy.deepcopy(models['server'].state_dict())
+        # [ADDED] Move server back to device
+        models['server'] = models['server'].to(device)  # [NEW]
 
         # Broadcast server model to selected clients
         for c in selected_clients_id:
+            # [CHANGED] First move client model to CPU
+            models['clients'][c] = models['clients'][c].cpu()  # [NEW]
             models['clients'][c].load_state_dict(server_state_dict, strict=False)
+            # [ADDED] Move back to device
+            models['clients'][c] = models['clients'][c].to(device)  # [NEW]
 
         # Local updates in parallel
         client_start = time.time()
@@ -158,19 +191,24 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, nu
         # Update client models with trained states
         for result in results:
             client_id = result['client_id']
+            # [CHANGED] First move client model to CPU
+            models['clients'][client_id] = models['clients'][client_id].cpu()  # [NEW]
             models['clients'][client_id].load_state_dict(result['state_dict'])
-            # schedulers['clients'][client_id].step()
+            # [ADDED] Move back to device
+            models['clients'][client_id] = models['clients'][client_id].to(device)  # [NEW]
             
         client_end = time.time()
         client_time = client_end - client_start
-        print(f"Client training completed in {format_time(client_time)} ({client_time:.2f}s)")
+        # print(f"Client training completed in {format_time(client_time)} ({client_time:.2f}s)")
 
         # Aggregation
         agg_start = time.time()
-        print("Aggregating model updates...")
 
+
+        # [CHANGED] Get local states, ensuring they're all on CPU
         local_states = [
-            copy.deepcopy(models['clients'][c].state_dict())
+            {k: v.cpu() if isinstance(v, torch.Tensor) else v   # [NEW]
+             for k, v in models['clients'][c].state_dict().items()}
             for c in selected_clients_id
         ]
 
@@ -182,11 +220,16 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, nu
             for i in range(1, len(selected_clients_id)):
                 model_state[key] = model_state[key].float() + local_states[i][key].float() * selected_data_num[i]
             model_state[key] = model_state[key].float() / np.sum(selected_data_num)
-            
+        
+        # [CHANGED] First move server to CPU
+        models['server'] = models['server'].cpu()  # [NEW]
         models['server'].load_state_dict(model_state, strict=False)
+        # [ADDED] Move back to device
+        models['server'] = models['server'].to(device)  # [NEW]
+        
         agg_end = time.time()
         agg_time = agg_end - agg_start
-        print(f"Model aggregation completed in {format_time(agg_time)} ({agg_time:.2f}s)")
+        # print(f"Model aggregation completed in {format_time(agg_time)} ({agg_time:.2f}s)")
 
         comm_end = time.time()
         comm_time = comm_end - comm_start
@@ -195,8 +238,6 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, nu
     overall_end = time.time()
     overall_time = overall_end - overall_start
     print(f"\n>> Cycle completed in {format_time(overall_time)} ({overall_time:.2f}s)")
-
-
 
 ##
 # Main
@@ -369,7 +410,7 @@ if __name__ == '__main__':
             total_labels = sum(len(labeled_set) for labeled_set in labeled_set_list)
 
             print(f'Trial {trial + 1}/{TRIALS} || Cycle {cycle + 1}/{CYCLES} || Labelled sets size {total_labels}: server acc {acc_server}')
-            print(f'Evaluation completed in {format_time(eval_time)} ({eval_time:.2f}s)')
+            # print(f'Evaluation completed in {format_time(eval_time)} ({eval_time:.2f}s)')
 
             # Prepare for next cycle
             private_train_loaders = []
@@ -378,7 +419,7 @@ if __name__ == '__main__':
             server_state_dict = models['server'].state_dict()
 
             # Perform parallel sample selection
-            print(f"Selecting samples in parallel with {NUM_PROCESSES} processes")
+            # print(f"Selecting samples in parallel with {NUM_PROCESSES} processes")
             start_time = time.time()
             
             selection_results = parallel_select_samples(
@@ -444,3 +485,23 @@ if __name__ == '__main__':
         print(f'Accuracies for trial {trial}:', accuracies[trial])
 
     print('Accuracies means:', np.array(accuracies).mean(1))
+
+    results = {
+        "strategy": ACTIVE_LEARNING_STRATEGY,
+        "clients": CLIENTS,
+        "epochs": EPOCH,
+        "communication_rounds": COMMUNICATION,
+        "budget": BUDGET,
+        "base": BASE,
+        "trials": TRIALS,
+        "ratio": RATIO,
+        "cycles": CYCLES,
+        "lr": LR,
+        "milestones": MILESTONES,
+        "num_train": NUM_TRAIN,
+        "wdecay": WDECAY,
+        "batch": BATCH,
+        "momentum": MOMENTUM,
+        "beta": BETA,
+        "accuracies": accuracies
+    }
