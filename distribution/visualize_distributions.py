@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from torchvision import datasets, transforms
 
 # --- Step 1: Load partitioned data from JSON ---
-filename = "alpha0-1_cifar10_20clients.json"
+filename = "alpha0-1_cifar10_10clients.json"
 with open(filename, "r") as f:
     partitioned_data = json.load(f)
 
