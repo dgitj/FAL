@@ -37,6 +37,7 @@ if __name__ == '__main__':
 
 # Set FAL parameters uses default parameters from KAFAL
 import argparse
+from data.dirichlet_partitioner import dirichlet_balanced_partition
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--strategy", type=str, default="LOGO")
@@ -57,6 +58,9 @@ parser.add_argument("--momentum", type=float, default=0.9)
 parser.add_argument("--beta", type=float, nargs=2, default=[2, 2])
 parser.add_argument("--data_root", type=str, default=os.getenv("DATA_ROOT", "data/cifar-10-batches-py"))
 #parser.add_argument("--data_root", type=str, default="data/cifar-10-batches-py")
+parser.add_argument("--dataset", type=str, default="cifar10", choices=["cifar10", "cifar100", "svhn"], help="Dataset to use (cifar10, cifar100, svhn)")
+parser.add_argument("--alpha", type=float, default=0.1,help="Alpha parameter for Dirichlet distribution")
+parser.add_argument("--generate_partition", action="store_true", help="Force regeneration of data partition")
 
 args = parser.parse_args()
 
@@ -80,7 +84,7 @@ DATA_ROOT = args.data_root
 
 from query_strategies.strategy_manager import StrategyManager
 import models.preact_resnet as resnet
-from torchvision.datasets import CIFAR10
+# from torchvision.datasets import CIFAR10
 import torchvision.transforms as T
 from data.sampler import SubsetSequentialSampler, SubsetSequentialRandomSampler
 
@@ -94,24 +98,110 @@ from multiprocessing_utils import (
     parallel_select_samples
 )
 
-# Load data
-cifar10_train_transform = T.Compose([
-    T.RandomHorizontalFlip(),
-    T.RandomCrop(size=32, padding=4),
+# Load data based on dataset choice
+dataset_name = args.dataset.lower()
+print(f"Using dataset: {dataset_name}")
+
+
+# Define transformations for different datasets
+train_transform = {
+    'cifar10': T.Compose([
+        T.RandomHorizontalFlip(),
+        T.RandomCrop(size=32, padding=4),
+        T.ToTensor(),
+        T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
+    ]),
+    'cifar100': T.Compose([
+        T.RandomHorizontalFlip(),
+        T.RandomCrop(size=32, padding=4),
+        T.ToTensor(),
+        T.Normalize([0.5071, 0.4867, 0.4408], [0.2675, 0.2565, 0.2761])
+    ]),
+    'svhn': T.Compose([
+    T.RandomCrop(size=32, padding=4), 
     T.ToTensor(),
-    T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
+    T.Normalize([0.4377, 0.4438, 0.4728], [0.1980, 0.2010, 0.1970])
 ])
+}
 
-cifar10_test_transform = T.Compose([
+
+test_transform = {
+    'cifar10': T.Compose([
+        T.ToTensor(),
+        T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
+    ]),
+    'cifar100': T.Compose([
+        T.ToTensor(),
+        T.Normalize([0.5071, 0.4867, 0.4408], [0.2675, 0.2565, 0.2761])
+    ]),
+    'svhn': T.Compose([
     T.ToTensor(),
-    T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
+    T.Normalize([0.4377, 0.4438, 0.4728], [0.1980, 0.2010, 0.1970])
 ])
+}
 
-cifar10_dataset_dir = DATA_ROOT
+# Load the appropriate dataset
+if dataset_name == 'cifar10':
+    train_dataset = CIFAR10(DATA_ROOT, train=True, download=True, transform=train_transform['cifar10'])
+    test_dataset = CIFAR10(DATA_ROOT, train=False, download=True, transform=test_transform['cifar10'])
+    select_dataset = CIFAR10(DATA_ROOT, train=True, download=True, transform=test_transform['cifar10'])
+    num_classes = 10
+elif dataset_name == 'cifar100':
+    train_dataset = CIFAR100(DATA_ROOT, train=True, download=True, transform=train_transform['cifar100'])
+    test_dataset = CIFAR100(DATA_ROOT, train=False, download=True, transform=test_transform['cifar100'])
+    select_dataset = CIFAR100(DATA_ROOT, train=True, download=True, transform=test_transform['cifar100'])
+    num_classes = 100
+elif dataset_name == 'svhn':
+    train_dataset = SVHN(DATA_ROOT, split='train', download=True, transform=train_transform['svhn'])
+    test_dataset = SVHN(DATA_ROOT, split='test', download=True, transform=test_transform['svhn'])
+    select_dataset = SVHN(DATA_ROOT, split='train', download=True, transform=test_transform['svhn'])
+    num_classes = 10
+else:
+    raise ValueError(f"Unsupported dataset: {dataset_name}")
 
-cifar10_train = CIFAR10(cifar10_dataset_dir, train=True, download=True, transform=cifar10_train_transform)
-cifar10_test  = CIFAR10(cifar10_dataset_dir, train=False, download=True, transform=cifar10_test_transform)
-cifar10_select = CIFAR10(cifar10_dataset_dir, train=True, download=True, transform=cifar10_test_transform)
+NUM_TRAIN = len(train_dataset)
+
+# Get labels for the entire dataset
+id2lab = []
+if hasattr(train_dataset, "targets"):
+    id2lab = train_dataset.targets
+elif hasattr(train_dataset, "train_labels"):
+    id2lab = train_dataset.train_labels
+elif hasattr(train_dataset, "labels"):  # For SVHN
+    id2lab = train_dataset.labels
+else:
+    # Extract labels individually if no bulk attribute is available
+    for i in range(len(train_dataset)):
+        _, label = train_dataset[i]
+        id2lab.append(label)
+id2lab = np.array(id2lab)
+
+# Generate or load partition file
+partition_dir = os.path.join("distribution", "balanced")
+os.makedirs(partition_dir, exist_ok=True)
+
+partition_filename = f"alpha{args.alpha}_{dataset_name}_{CLIENTS}clients_seed{args.seed}.json"
+partition_path = os.path.join(partition_dir, partition_filename)
+
+if os.path.exists(partition_path) and not args.generate_partition:
+    print(f"Loading existing partition from {partition_path}")
+    with open(partition_path) as json_file:
+        data_splits = json.load(json_file)
+else:
+    print(f"Generating new balanced partition with alpha={args.alpha}")
+    # Using the imported function from our separate module
+    data_splits = dirichlet_balanced_partition(
+        train_dataset, 
+        CLIENTS, 
+        args.alpha,
+        args.seed
+    )
+    
+    # Save for future use
+    with open(partition_path, 'w') as f:
+        json.dump(data_splits, f)
+    print(f"Saved partition to {partition_path}")
+
 
 def read_data(dataloader):
     while True:
@@ -249,13 +339,13 @@ if __name__ == '__main__':
     accuracies = [[] for _ in range(TRIALS)]
 
     indices = list(range(NUM_TRAIN))
-    id2lab = []
-    for id in indices:
-        id2lab.append(cifar10_train[id][1])
-    id2lab = np.array(id2lab)
+    # id2lab = []
+    # for id in indices:
+    #    id2lab.append(train_dataset[id][1])
+    # id2lab = np.array(id2lab)
 
-    with open(f"distribution/alpha0.1_cifar10_{CLIENTS}clients_var0.1_seed42.json") as json_file:
-        data_splits = json.load(json_file)
+    # with open(f"distribution/alpha0.1_cifar10_{CLIENTS}clients_var0.1_seed42.json") as json_file:
+      #  data_splits = json.load(json_file)
         
     for trial in range(TRIALS):
         random.seed(100 + trial)
@@ -316,7 +406,7 @@ if __name__ == '__main__':
             unlabeled_set_list.append(data_list[c][base[c]:])
             
             private_train_loaders.append(DataLoader(
-                cifar10_train, 
+                train_dataset, 
                 batch_size=BATCH,
                 sampler=SubsetSequentialRandomSampler(labeled_set_list[c]),
                 num_workers=2,
@@ -324,7 +414,7 @@ if __name__ == '__main__':
             ))
             
             private_unlab_loaders.append(DataLoader(
-                cifar10_train, 
+                train_dataset, 
                 batch_size=BATCH,
                 sampler=SubsetSequentialRandomSampler(unlabeled_set_list[c]),
                 num_workers=2,
@@ -342,7 +432,7 @@ if __name__ == '__main__':
             device=device
         )
 
-        test_loader = DataLoader(cifar10_test, batch_size=BATCH)
+        test_loader = DataLoader(test_dataset, batch_size=BATCH)
         dataloaders = {'train-private': private_train_loaders, 'unlab-private': private_unlab_loaders, 'test': test_loader}
         
         # Model
@@ -456,7 +546,7 @@ if __name__ == '__main__':
 
                 # Update dataloaders with new data pools
                 private_train_loaders.append(DataLoader(
-                    cifar10_train, 
+                    train_dataset, 
                     batch_size=BATCH,
                     sampler=SubsetSequentialRandomSampler(labeled_set_list[c]),
                     num_workers=2,
@@ -464,7 +554,7 @@ if __name__ == '__main__':
                 ))
                 
                 private_unlab_loaders.append(DataLoader(
-                    cifar10_train, 
+                    train_dataset, 
                     batch_size=BATCH,
                     sampler=SubsetSequentialRandomSampler(unlabeled_set_list[c]),
                     num_workers=2,
