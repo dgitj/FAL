@@ -5,7 +5,7 @@ from torchvision import datasets
 from scipy.stats import beta
 
 # --- Load partitioned data from JSON ---
-filename = "alpha0-1_cifar10_20clients.json"
+filename = "alpha0-1_cifar10_10clients.json"
 with open(filename, "r") as f:
     partitioned_data = json.load(f)
 
