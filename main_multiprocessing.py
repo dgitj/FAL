@@ -14,6 +14,7 @@ import torch.optim.lr_scheduler as lr_scheduler
 import torch.nn.functional as F
 from torch.distributions import Beta
 import torch.multiprocessing as mp
+from torchvision.datasets import CIFAR10, CIFAR100, SVHN
 
 
 # Device selection
@@ -61,6 +62,8 @@ parser.add_argument("--data_root", type=str, default=os.getenv("DATA_ROOT", "dat
 parser.add_argument("--dataset", type=str, default="cifar10", choices=["cifar10", "cifar100", "svhn"], help="Dataset to use (cifar10, cifar100, svhn)")
 parser.add_argument("--alpha", type=float, default=0.1,help="Alpha parameter for Dirichlet distribution")
 parser.add_argument("--generate_partition", action="store_true", help="Force regeneration of data partition")
+# Add this to your argument parser in main_multiprocessing.py
+parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
 
 args = parser.parse_args()
 
@@ -84,9 +87,9 @@ DATA_ROOT = args.data_root
 
 from query_strategies.strategy_manager import StrategyManager
 import models.preact_resnet as resnet
-# from torchvision.datasets import CIFAR10
 import torchvision.transforms as T
 from data.sampler import SubsetSequentialSampler, SubsetSequentialRandomSampler
+from data.dirichlet_partitioner import dirichlet_balanced_partition
 
 def format_time(seconds):
     """Format time in a human-readable way"""
@@ -355,7 +358,6 @@ if __name__ == '__main__':
 
         private_train_loaders = []
         private_unlab_loaders = []
-        num_classes = 10 # CIFAR10
 
         rest_data = indices.copy()
 
