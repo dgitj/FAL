@@ -14,8 +14,10 @@ DATA_ROOT = 'data/cifar-10-batches-py'
 # - "LOGO"
 
 
-ACTIVE_LEARNING_STRATEGY = "LOGO"
+ACTIVE_LEARNING_STRATEGY = "Entropy"
 
+# same random sampling for base across experiments
+BASE_RANDOM_SEED = 42
 
 # setting
 BUDGET  = 2500

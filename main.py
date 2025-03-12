@@ -16,14 +16,11 @@ import torch.optim.lr_scheduler as lr_scheduler
 import torch.nn.functional as F
 from torch.distributions import Beta
 
-# mps_available = torch.backends.mps.is_available()
-# print(f"MPS available: {mps_available}")
-
-# cuda_available = torch.cuda.is_available()
-# print(f"CUDA available: {cuda_available}")
+# Dirichlet partitioner
+from distribution.dirichlet_partitioner import dirichlet_balanced_partition
 
 # Device
-if torch.cuda.is_available():
+if torch.cuda.is_available():   
     device = torch.device("cuda")
 elif torch.backends.mps.is_available():
     device = torch.device("mps")
@@ -270,8 +267,15 @@ if __name__ == '__main__':
         id2lab.append(cifar10_train[id][1])
     id2lab = np.array(id2lab)
 
-    with open(f"distribution/alpha0.1_cifar10_{CLIENTS}clients_var0.1_seed42.json") as json_file:
-        data_splits = json.load(json_file)
+
+    # with open(f"distribution/alpha0.1_cifar10_{CLIENTS}clients_var0.1_seed42.json") as json_file:
+    #    data_splits = json.load(json_file)
+
+    print(f"Generating Dirichlet partition with alpha=0.1 for {CLIENTS} clients...")
+
+    data_splits = dirichlet_balanced_partition(cifar10_train, CLIENTS, alpha=0.1, seed=42)
+    print(f"Partition generated. Total samples: {sum(len(client) for client in data_splits)}")
+
     for trial in range(TRIALS):
         random.seed(100 + trial)
         labeled_set_list = []
@@ -308,9 +312,26 @@ if __name__ == '__main__':
         # prepare initial data pools
         for c in range(CLIENTS):
             data_list.append(data_splits[c])
-            random.shuffle(data_list[c])
+
+            # Create a separate random generator that won't affect the rest of the randomness
+            init_sample_rng = np.random.RandomState(BASE_RANDOM_SEED + c)
+
+            # Generate reproducible shuffled indices
+            shuffled_indices = np.arange(len(data_splits[c]))
+            init_sample_rng.shuffle(shuffled_indices)
+
+            # Apply the shuffled indices
+            data_list[c] = [data_splits[c][i] for i in shuffled_indices]
+
+            # random.shuffle(data_list[c]) # Old code without reproducibility
             # public_set.extend(data_list[c][-base:])
             labeled_set_list.append(data_list[c][:base[c]])
+
+            # Debug statements
+            # print(f"Client {c}: First 5 selected indices: {data_list[c][:5]}")
+            # print(f"Client {c}: Initial labeled set size: {len(labeled_set_list[c])}")
+            # print(f"Client {c}: Checksum of all selected indices: {sum(labeled_set_list[c]) % 10000}")
+
             values, counts = np.unique(id2lab[np.array(data_list[c])], return_counts=True)
             dictionary = dict(zip(values, counts))
             ratio = np.zeros(num_classes)
