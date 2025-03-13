@@ -16,8 +16,12 @@ DATA_ROOT = 'data/cifar-10-batches-py'
 
 ACTIVE_LEARNING_STRATEGY = "Entropy"
 
-# same random sampling for base across experiments
+# same random sampling for base dataset
 BASE_RANDOM_SEED = 42
+
+# dirichlet partition seed
+SEED = 42
+ALPHA = 0.1
 
 # setting
 BUDGET  = 2500
@@ -28,6 +32,8 @@ CYCLES =6
 RATIO=0.8
 CLIENTS=10
 TRIALS=1
+LOCAL_MODEL_UPDATE = "Vanilla" # Options are "Vanilla" and "KFCU"  
+
 
 # training
 LR = 0.1

@@ -17,7 +17,7 @@ import torch.nn.functional as F
 from torch.distributions import Beta
 
 # Dirichlet partitioner
-from distribution.dirichlet_partitioner import dirichlet_balanced_partition
+from data.dirichlet_partitioner import dirichlet_balanced_partition
 
 # Device
 if torch.cuda.is_available():   
@@ -42,6 +42,17 @@ from torchvision.datasets import CIFAR10
 # Utils
 from config import *
 from tqdm import tqdm
+
+def set_all_seeds(seed):
+    """Set all seeds for reproducibility"""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 # dataset
 from data.sampler import SubsetSequentialSampler
@@ -100,16 +111,20 @@ def read_data(dataloader):
 
 iters = 0
 
-"""
+
 def train_epoch_client_distil(selected_clients_id, models, criterion, optimizers, dataloaders, comm):
     global iters
-
     kld = nn.KLDivLoss(reduce=False)
 
     for c in selected_clients_id:
+        client_rng = np.random.RandomState(trial_seed + c * 1000 + comm * 10)	
+        torch_gen = torch.Generator(device=device)
+        torch_gen.manual_seed(trial_seed + c * 1000 + comm * 10)
+
         mod = models['clients'][c]
         mod.train()
         unlab_set = read_data(dataloaders['unlab-private'][c])
+
         for data in tqdm(dataloaders['train-private'][c], leave=False, total=len(dataloaders['train-private'][c])):
             inputs = data[0].to(device)
             labels = data[1].to(device)
@@ -117,11 +132,17 @@ def train_epoch_client_distil(selected_clients_id, models, criterion, optimizers
             unlab_data = next(unlab_set)
             unlab_inputs = unlab_data[0].to(device)
 
-            # mix unlabelled data
+            # deterministic beta sampling
             m = Beta(torch.FloatTensor([BETA[0]]).item(), torch.FloatTensor([BETA[1]]).item())
-            beta_0 = m.sample(sample_shape=torch.Size([unlab_inputs.size(0)])).to(device)
+            beta_0 = m.sample(sample_shape=torch.Size([unlab_inputs.size(0)]), generator=torch_gen).to(device)
             beta = beta_0.view(unlab_inputs.size(0), 1, 1, 1)
-            indices = np.random.choice(unlab_inputs.size(0), replace=False)
+
+            # deterministic index selection
+            batch_seed = trial_seed + c * 10000 + comm * 1000 + data
+            idx_rng = np.random.RandomState(batch_seed)
+            indices = idx_rng.choice(unlab_inputs.size(0), size=unlab_inputs.size(0), replace=False)
+            
+            
             mixed_inputs =  beta * unlab_inputs + (1 - beta) * unlab_inputs[indices,...]
 
             scores, _  = mod(inputs)
@@ -158,16 +179,29 @@ def train_epoch_client_distil(selected_clients_id, models, criterion, optimizers
             # log
             if (iters % 1000 == 0):
                 print('loss: ', loss.item(), 'distil loss: ', distil_loss.item())
-"""
 
-def train_epoch_client_traditional(selected_clients_id, models, criterion, optimizers, dataloaders):
+
+def train_epoch_client_vanilla(selected_clients_id, models, criterion, optimizers, dataloaders):
     global iters
 
     for c in selected_clients_id:
+        # Set deterministic behavior for this client
+        client_seed = trial_seed + c * 1000
+        torch.manual_seed(client_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(client_seed)
+
         mod = models['clients'][c]
         mod.train()
         
         for data in tqdm(dataloaders['train-private'][c], leave=False, total=len(dataloaders['train-private'][c])):
+             # Use a batch-specific seed for complete reproducibility
+            batch_seed = client_seed + batch_idx
+            torch.manual_seed(batch_seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed(batch_seed)
+            
+            
             inputs = data[0].cuda()
             labels = data[1].cuda()
 
@@ -205,11 +239,14 @@ def test(models, dataloaders, mode='test'):
     return 100 * correct / total
 
 
-def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs):
+def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, trial_seed):
     print('>> Train a Model.')
 
     for com in range(COMMUNICATION):
         ###
+         # Deterministic client selection
+        rng = np.random.RandomState(trial_seed + com * 100)
+
         if com < COMMUNICATION-1:
             selected_clients_id = np.random.choice(CLIENTS, int(CLIENTS * RATIO), replace=False)
         else:
@@ -226,7 +263,12 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs):
         # local updates
         start = time.time()
         for epoch in range(num_epochs):
-            train_epoch_client_traditional(selected_clients_id, models, criterion, optimizers, dataloaders)
+            # Choose the appropriate training method
+            if LOCAL_MODEL_UPDATE == "Vanilla":
+                train_epoch_client_vanilla(selected_clients_id, models, criterion, optimizers, dataloaders, trial_seed + epoch)
+            else:  # KCFU
+                train_epoch_client_distil(selected_clients_id, models, criterion, optimizers, dataloaders, com , trial_seed + epoch)
+
             for c in selected_clients_id:
                 schedulers['clients'][c].step() #changed order of optimizer and scheduler
             print(f'Epoch: {epoch + 1}/{num_epochs} | Communication round: {com + 1}/{COMMUNICATION} | Cycle: {cycle + 1}/{CYCLES}')    
@@ -259,6 +301,8 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs):
 # Main
 if __name__ == '__main__':
 
+    set_all_seeds(SEED)
+
     accuracies = [[] for _ in range(TRIALS)]
 
     indices = list(range(NUM_TRAIN))
@@ -271,13 +315,16 @@ if __name__ == '__main__':
     # with open(f"distribution/alpha0.1_cifar10_{CLIENTS}clients_var0.1_seed42.json") as json_file:
     #    data_splits = json.load(json_file)
 
-    print(f"Generating Dirichlet partition with alpha=0.1 for {CLIENTS} clients...")
+    print(f"Generating Dirichlet partition with alpha {ALPHA}, seed {SEED} for {CLIENTS} clients...")
 
-    data_splits = dirichlet_balanced_partition(cifar10_train, CLIENTS, alpha=0.1, seed=42)
-    print(f"Partition generated. Total samples: {sum(len(client) for client in data_splits)}")
+    data_splits = dirichlet_balanced_partition(cifar10_train, CLIENTS, alpha=ALPHA, seed=SEED)
 
     for trial in range(TRIALS):
-        random.seed(100 + trial)
+        trial_seed = SEED + TRIAL_SEED_OFFSET * (trial + 1)
+        set_all_seeds(trial_seed)
+
+        print(f"\n=== Trial {trial+1}/{TRIALS} (Seed: {trial_seed}) ===\n")
+
         labeled_set_list = []
         unlabeled_set_list = []
         pseudo_set = []
@@ -314,7 +361,7 @@ if __name__ == '__main__':
             data_list.append(data_splits[c])
 
             # Create a separate random generator that won't affect the rest of the randomness
-            init_sample_rng = np.random.RandomState(BASE_RANDOM_SEED + c)
+            init_sample_rng = np.random.RandomState(trial_seed + c * 100)
 
             # Generate reproducible shuffled indices
             shuffled_indices = np.arange(len(data_splits[c]))
@@ -338,7 +385,8 @@ if __name__ == '__main__':
             ratio[values] = counts
             ratio /= np.sum(counts)
             data_ratio_list.append(ratio)
-            print('client {}, ratio {}'.format(c, ratio))
+            # print('client {}, ratio {}'.format(c, ratio))
+            print("Base random seed: ", BASE_RANDOM_SEED)
 
             values, counts = np.unique(id2lab[np.array(labeled_set_list[c])], return_counts=True)
             ratio = np.zeros(num_classes)
@@ -382,6 +430,8 @@ if __name__ == '__main__':
 
         torch.backends.cudnn.benchmark = False
 
+        print("Local model training using", LOCAL_MODEL_UPDATE)
+
         # Active learning cycles
         for cycle in range(CYCLES):
 
@@ -408,7 +458,7 @@ if __name__ == '__main__':
 
             unlabeled_loaders = []
 
-            train(models, criterion, optimizers, schedulers, dataloaders, EPOCH)
+            train(models, criterion, optimizers, schedulers, dataloaders, EPOCH, trial_seed)
 
             total_labels = 0
             for c in range(CLIENTS):
@@ -421,6 +471,12 @@ if __name__ == '__main__':
 
             # Calculate sampling scores and sample for annotations.
             for c in range(CLIENTS):
+
+                c_rng = np.random.RandomState(trial_seed + c * 500 + cycle * 50)
+                unlabeled_indices = np.array(unlabeled_set_list[c])
+                c_rng.shuffle(unlabeled_indices)
+                unlabeled_set_list[c] = unlabeled_indices.tolist()
+
                 random.shuffle(unlabeled_set_list[c])
                 unlabeled_loader = DataLoader(cifar10_select, batch_size=BATCH,
                                               sampler=SubsetSequentialSampler(unlabeled_set_list[c]),
