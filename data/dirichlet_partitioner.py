@@ -3,8 +3,9 @@ import random
 import numpy as np
 import math
 from torchvision.datasets import CIFAR10, CIFAR100, SVHN
+from config import SEED
 
-def dirichlet_balanced_partition(dataset, num_clients, alpha, seed=42):
+def dirichlet_balanced_partition(dataset, num_clients, alpha, seed):
     """
     Balanced Dirichlet partitioner that creates equal-sized client datasets
     while preserving non-IID characteristics.
@@ -28,6 +29,8 @@ def dirichlet_balanced_partition(dataset, num_clients, alpha, seed=42):
     torch.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
+
+    print(f"Dirichlet seed: {seed}")
     
     # Get number of classes from dataset
     if isinstance(dataset, CIFAR10):
