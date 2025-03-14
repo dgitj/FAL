@@ -5,6 +5,7 @@ import copy
 import json
 import time
 import importlib
+import functools
 
 # Torch
 import torch
@@ -53,6 +54,19 @@ def set_all_seeds(seed):
         torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+def seed_worker_fn(base_seed, worker_id):
+    """Sets unique seed for each dataloader worker"""
+    worker_seed = base_seed + worker_id
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+    torch.manual_seed(worker_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(worker_seed)
+
+# Function to create a partial application (picklable)
+def get_seed_worker(base_seed):
+    """Creates a worker initialization function with the given base seed"""
+    return functools.partial(seed_worker_fn, base_seed)
 
 # dataset
 from data.sampler import SubsetSequentialSampler
@@ -112,7 +126,7 @@ def read_data(dataloader):
 iters = 0
 
 
-def train_epoch_client_distil(selected_clients_id, models, criterion, optimizers, dataloaders, comm):
+def train_epoch_client_distil(selected_clients_id, models, criterion, optimizers, dataloaders, comm, trial_seed):
     global iters
     kld = nn.KLDivLoss(reduce=False)
 
@@ -125,7 +139,7 @@ def train_epoch_client_distil(selected_clients_id, models, criterion, optimizers
         mod.train()
         unlab_set = read_data(dataloaders['unlab-private'][c])
 
-        for data in tqdm(dataloaders['train-private'][c], leave=False, total=len(dataloaders['train-private'][c])):
+        for batch_idx, data in enumerate(tqdm(dataloaders['train-private'][c], leave=False, total=len(dataloaders['train-private'][c]))):
             inputs = data[0].to(device)
             labels = data[1].to(device)
 
@@ -138,7 +152,7 @@ def train_epoch_client_distil(selected_clients_id, models, criterion, optimizers
             beta = beta_0.view(unlab_inputs.size(0), 1, 1, 1)
 
             # deterministic index selection
-            batch_seed = trial_seed + c * 10000 + comm * 1000 + data
+            batch_seed = trial_seed + c * 10000 + comm * 1000 + batch_idx
             idx_rng = np.random.RandomState(batch_seed)
             indices = idx_rng.choice(unlab_inputs.size(0), size=unlab_inputs.size(0), replace=False)
             
@@ -181,7 +195,7 @@ def train_epoch_client_distil(selected_clients_id, models, criterion, optimizers
                 print('loss: ', loss.item(), 'distil loss: ', distil_loss.item())
 
 
-def train_epoch_client_vanilla(selected_clients_id, models, criterion, optimizers, dataloaders):
+def train_epoch_client_vanilla(selected_clients_id, models, criterion, optimizers, dataloaders, trial_seed):
     global iters
 
     for c in selected_clients_id:
@@ -194,16 +208,16 @@ def train_epoch_client_vanilla(selected_clients_id, models, criterion, optimizer
         mod = models['clients'][c]
         mod.train()
         
-        for data in tqdm(dataloaders['train-private'][c], leave=False, total=len(dataloaders['train-private'][c])):
+        for batchidx, data in enumerate(tqdm(dataloaders['train-private'][c], leave=False, total=len(dataloaders['train-private'][c]))):
              # Use a batch-specific seed for complete reproducibility
-            batch_seed = client_seed + batch_idx
+            batch_seed = client_seed + batchidx
             torch.manual_seed(batch_seed)
             if torch.cuda.is_available():
                 torch.cuda.manual_seed(batch_seed)
             
             
-            inputs = data[0].cuda()
-            labels = data[1].cuda()
+            inputs = data[0].to(device)
+            labels = data[1].to(device)
 
             # Forward pass
             scores, _ = mod(inputs)
@@ -248,7 +262,7 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, tr
         rng = np.random.RandomState(trial_seed + com * 100)
 
         if com < COMMUNICATION-1:
-            selected_clients_id = np.random.choice(CLIENTS, int(CLIENTS * RATIO), replace=False)
+            selected_clients_id = rng.choice(CLIENTS, int(CLIENTS * RATIO), replace=False)
         else:
             selected_clients_id = range(CLIENTS)
         ###
@@ -300,8 +314,6 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, tr
 ##
 # Main
 if __name__ == '__main__':
-
-    set_all_seeds(SEED)
 
     accuracies = [[] for _ in range(TRIALS)]
 
@@ -358,6 +370,18 @@ if __name__ == '__main__':
 
         # prepare initial data pools
         for c in range(CLIENTS):
+
+            client_worker_init_fn = get_seed_worker(trial_seed + c * 100)
+
+                        # For labeled data loaders
+            g_labeled = torch.Generator()
+            g_labeled.manual_seed(trial_seed + c * 100 + 10000)
+
+            # For unlabeled data loaders
+            g_unlabeled = torch.Generator()
+            g_unlabeled.manual_seed(trial_seed + c * 100 + 20000)
+
+
             data_list.append(data_splits[c])
 
             # Create a separate random generator that won't affect the rest of the randomness
@@ -386,7 +410,6 @@ if __name__ == '__main__':
             ratio /= np.sum(counts)
             data_ratio_list.append(ratio)
             # print('client {}, ratio {}'.format(c, ratio))
-            print("Base random seed: ", BASE_RANDOM_SEED)
 
             values, counts = np.unique(id2lab[np.array(labeled_set_list[c])], return_counts=True)
             ratio = np.zeros(num_classes)
@@ -394,16 +417,22 @@ if __name__ == '__main__':
             loss_weight_list.append(torch.tensor(ratio, dtype=torch.float32).to(device))
             # loss_weight_list.append(torch.tensor(ratio).to(device).float())
 
+
+
             data_num.append(len(labeled_set_list[c]))
             unlabeled_set_list.append(data_list[c][base[c]:])
+
             private_train_loaders.append(DataLoader(cifar10_train, batch_size=BATCH,
                            sampler=SubsetRandomSampler(labeled_set_list[c]),
-                           # num_workers= 4,
-                            num_workers= 2,
-                           pin_memory=True))
+                            num_workers= 4,
+                            worker_init_fn=client_worker_init_fn,
+                            generator=g_labeled,
+                            pin_memory=True))
             private_unlab_loaders.append(DataLoader(cifar10_train, batch_size=BATCH,
                                                     sampler=SubsetRandomSampler(unlabeled_set_list[c]),
                                                     num_workers=4,
+                                                    worker_init_fn=client_worker_init_fn,
+                                                    generator=g_unlabeled,
                                                     pin_memory=True))
 
             client_models.append(copy.deepcopy(resnet8).to(device))
@@ -420,7 +449,16 @@ if __name__ == '__main__':
 
         del resnet8
 
-        test_loader  = DataLoader(cifar10_test, batch_size=BATCH)
+        test_generator = torch.Generator()
+        test_generator.manual_seed(trial_seed)  # Using the trial seed for consistency
+        test_worker_init_fn = get_seed_worker(trial_seed + 50000)  # Unique seed for test loader
+        test_loader = DataLoader(
+            cifar10_test, 
+            batch_size=BATCH,
+            worker_init_fn=test_worker_init_fn, 
+            generator=test_generator,
+            pin_memory=True
+        )
 
         dataloaders  = {'train-private': private_train_loaders,'unlab-private': private_unlab_loaders, 'test': test_loader}
         
@@ -470,16 +508,24 @@ if __name__ == '__main__':
             server_state_dict = models['server'].state_dict()
 
             # Calculate sampling scores and sample for annotations.
-            for c in range(CLIENTS):
+            for c in range(CLIENTS): 
 
+                cycle_worker_init_fn = get_seed_worker(trial_seed + c * 100 + cycle * 1000)
+                g_labeled_cycle = torch.Generator()
+                g_labeled_cycle.manual_seed(trial_seed + c * 100 + cycle * 1000 + 10000)
+                g_unlabeled_cycle = torch.Generator()
+                g_unlabeled_cycle.manual_seed(trial_seed + c * 100 + cycle * 1000 + 20000)
+            
                 c_rng = np.random.RandomState(trial_seed + c * 500 + cycle * 50)
                 unlabeled_indices = np.array(unlabeled_set_list[c])
                 c_rng.shuffle(unlabeled_indices)
                 unlabeled_set_list[c] = unlabeled_indices.tolist()
 
-                random.shuffle(unlabeled_set_list[c])
                 unlabeled_loader = DataLoader(cifar10_select, batch_size=BATCH,
                                               sampler=SubsetSequentialSampler(unlabeled_set_list[c]),
+                                              num_workers=4, 
+                                              worker_init_fn=cycle_worker_init_fn,
+                                              generator=g_unlabeled_cycle, # not necessary but used of consistency
                                               pin_memory=True)
 
                 selected_samples, remaining_unlabeled = strategy_manager.select_samples(
@@ -506,14 +552,18 @@ if __name__ == '__main__':
                 loss_weight_list_2.append(torch.tensor(ratio).to(device).float())
                 data_num.append(len(labeled_set_list[c]))
 
-                # dataloaders with updated data pools
+                # dataloaders with updated data 
                 private_train_loaders.append(DataLoader(cifar10_train, batch_size=BATCH,
                                                         sampler=SubsetRandomSampler(labeled_set_list[c]),
                                                         num_workers=4,
+                                                        worker_init_fn=cycle_worker_init_fn,
+                                                        generator=g_labeled_cycle,
                                                         pin_memory=True))
                 private_unlab_loaders.append(DataLoader(cifar10_train, batch_size=BATCH,
                                                         sampler=SubsetRandomSampler(unlabeled_set_list[c]),
                                                         num_workers=4,
+                                                        worker_init_fn=cycle_worker_init_fn,
+                                                        generator=g_unlabeled_cycle,
                                                         pin_memory=True))
             # evaluation
             acc_server = test(models, dataloaders, mode='test')

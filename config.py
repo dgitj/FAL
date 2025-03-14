@@ -16,8 +16,9 @@ DATA_ROOT = 'data/cifar-10-batches-py'
 
 ACTIVE_LEARNING_STRATEGY = "Entropy"
 
-# same random sampling for base dataset
-BASE_RANDOM_SEED = 42
+# random seed
+SEED = 42
+TRIAL_SEED_OFFSET = 2000000
 
 # dirichlet partition seed
 SEED = 42
