@@ -78,17 +78,11 @@ class EntropySampler:
         # Compute entropy scores for each sample in unlabeled_set
         entropy_scores = self.compute_entropy(model, unlabeled_loader, unlabeled_set)
         
-        if len(entropy_scores) == 0 or np.var(entropy_scores) < 1e-5:
-            print("⚠️ Warning: No meaningful entropy scores. Falling back to random selection.")
-            # Fallback to random selection if entropy scores aren't useful
-            selected_indices = np.random.choice(len(unlabeled_set), num_samples, replace=False)
-            selected_samples = [unlabeled_set[i] for i in selected_indices]
-            
-            remaining_indices = [i for i in range(len(unlabeled_set)) if i not in selected_indices]
-            remaining_unlabeled = [unlabeled_set[i] for i in remaining_indices]
-            
-            # print(f"After Selection (Fallback) - Remaining Unlabeled Set Size: {len(remaining_unlabeled)}")
-            return selected_samples, remaining_unlabeled
+        if len(entropy_scores) == 0:
+            raise ValueError("Entropy computation failed: No entropy scores were generated")
+        
+        if np.var(entropy_scores) < 1e-5:
+            raise ValueError("Entropy scores have near-zero variance. Model predictions may be too confident or too uncertain.")
         
         # Sort by entropy in descending order (highest entropy first)
         sorted_indices = np.argsort(-entropy_scores)
@@ -108,7 +102,7 @@ class EntropySampler:
         
         # Debug: Check for duplicate indices
         if len(set(selected_samples)) != len(selected_samples):
-            print("Warning: Duplicate indices in selected samples!")
+            raise ValueError("Implementation error: Duplicate indices in selected samples")
             
         # Debug: Check if any selected samples remain in the remaining set
         intersection = set(selected_samples).intersection(set(remaining_unlabeled))
