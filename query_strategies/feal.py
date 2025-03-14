@@ -161,53 +161,52 @@ class FEALSampler:
         num_samples = min(num_samples, len(unlabeled_set))
         unlabeled_len = len(unlabeled_set)
 
-        try:
             # Stage 1: Compute uncertainties with explicit index tracking
-            g_data, l_data, g_dis, l_features, original_indices = self.compute_discrepancy(
+        g_data, l_data, g_dis, l_features, original_indices = self.compute_discrepancy(
                 global_model, local_model, unlabeled_loader
-            )
+        )
             
-            # Verify index tracking was successful
-            if len(original_indices) != unlabeled_len or len(g_data) != unlabeled_len:
-                print(f"Warning: Index tracking mismatch in FEAL. "
-                      f"Expected {unlabeled_len}, got {len(original_indices)} indices and {len(g_data)} scores")
-                # Fallback to random selection
-                selected_indices = np.random.choice(len(unlabeled_set), num_samples, replace=False)
-                selected_samples = [unlabeled_set[i] for i in selected_indices]
-                remaining_unlabeled = [idx for idx in unlabeled_set if idx not in selected_samples]
-                return selected_samples, remaining_unlabeled
+        # Verify index tracking was successful
+        if len(original_indices) != unlabeled_len or len(g_data) != unlabeled_len:
+                 raise ValueError(f"Index tracking mismatch in FEAL. "
+                    f"Expected {unlabeled_len}, got {len(original_indices)} indices and {len(g_data)} scores")
+                
 
-            # Stage 2: Uncertainty calibration
-            u_dis_norm = (g_dis - g_dis.min()) / (g_dis.max() - g_dis.min() + 1e-10)  # Add small epsilon
-            uncertainty = u_dis_norm * (g_data + l_data)
-            u_rank_arg = torch.argsort(-uncertainty).cpu().numpy()
+        # Stage 2: Uncertainty calibration
+        if g_dis.max() - g_dis.min() < 1e-10:
+            raise ValueError("Global uncertainty range is too small for meaningful calibration")
 
-            # Stage 3: Relaxation for diversity with proper index mapping
-            ranked_orig_indices = self.relaxation(
-                u_rank_arg=u_rank_arg,
-                l_feature_list=l_features,
-                neighbor_num=self.n_neighbor,
-                query_num=num_samples,
-                unlabeled_len=unlabeled_len,
-                original_indices=original_indices
-            )
+        u_dis_norm = (g_dis - g_dis.min()) / (g_dis.max() - g_dis.min() + 1e-10)  # Add small epsilon
+        uncertainty = u_dis_norm * (g_data + l_data)
+
+        if uncertainty.numel() == 0:
+            raise ValueError("No valid uncertainty scores computed")
+
+        u_rank_arg = torch.argsort(-uncertainty).cpu().numpy()
+
+        # Stage 3: Relaxation for diversity with proper index mapping
+        ranked_orig_indices = self.relaxation(
+            u_rank_arg=u_rank_arg,
+            l_feature_list=l_features,
+            neighbor_num=self.n_neighbor,
+            query_num=num_samples,
+            unlabeled_len=unlabeled_len,
+            original_indices=original_indices
+        )
             
-            # Get actual dataset indices (not just positions in unlabeled_set)
-            selected_samples = ranked_orig_indices[-num_samples:]  # Most important at the end
-            remaining_unlabeled = ranked_orig_indices[:-num_samples]
+        # Get actual dataset indices (not just positions in unlabeled_set)
+        selected_samples = ranked_orig_indices[-num_samples:]  # Most important at the end
+        remaining_unlabeled = ranked_orig_indices[:-num_samples]
+
+        # Sanity check - no duplicates
+        if len(set(selected_samples)) != len(selected_samples):
+            raise ValueError("Duplicate samples in FEAL selection result")
             
-            # Sanity check - no duplicates
-            if len(set(selected_samples)) != len(selected_samples):
-                print("Warning: Duplicate samples in FEAL selection")
-            if len(set(selected_samples).intersection(set(remaining_unlabeled))) > 0:
-                print("Warning: Overlap between selected and remaining samples in FEAL")
+        # Check if any selected samples remain in the remaining set
+        intersection = set(selected_samples).intersection(set(remaining_unlabeled))
+        if intersection:
+            raise ValueError(f"{len(intersection)} selected samples still in remaining set - implementation error")
+        
+        return selected_samples, remaining_unlabeled
             
-            return selected_samples, remaining_unlabeled
-            
-        except Exception as e:
-            print(f"Error in FEAL sampling: {str(e)}")
-            # Fallback to random selection
-            selected_indices = np.random.choice(len(unlabeled_set), num_samples, replace=False)
-            selected_samples = [unlabeled_set[i] for i in selected_indices]
-            remaining_unlabeled = [idx for idx in unlabeled_set if idx not in selected_samples]
-            return selected_samples, remaining_unlabeled
+    
