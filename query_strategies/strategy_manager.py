@@ -68,7 +68,7 @@ class StrategyManager:
             
         print(f"{strategy_name} strategy initialized successfully")
         
-    def select_samples(self, model, model_server, unlabeled_loader, c, unlabeled_set, num_samples):
+    def select_samples(self, model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, seed=None):
         """
         Select samples using the specified active learning strategy.
         
@@ -89,22 +89,22 @@ class StrategyManager:
         # Handle different parameter requirements for each strategy
         if self.strategy_name == "KAFAL":
             # KAFAL needs client ID for its specialized knowledge component
-            return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples) 
+            return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, seed=seed) 
         elif self.strategy_name == "FEAL":
             # FEAL needs both global and local models for discrepancy
-            return self.sampler.select_samples(global_model=model_server, local_model=model, unlabeled_loader=unlabeled_loader, unlabeled_set=unlabeled_set, num_samples=num_samples) 
+            return self.sampler.select_samples(global_model=model_server, local_model=model, unlabeled_loader=unlabeled_loader, unlabeled_set=unlabeled_set, num_samples=num_samples, seed=seed) 
         elif self.strategy_name == "Noise":
             # NoiseStability just needs the local model
-            return self.sampler.select_samples(model, unlabeled_loader, unlabeled_set, num_samples)
+            return self.sampler.select_samples(model, unlabeled_loader, unlabeled_set, num_samples, seed=seed)
         elif self.strategy_name == "BADGE":
             # BADGE just needs the local model
-            return self.sampler.select_samples(model, unlabeled_loader, unlabeled_set, num_samples)
+            return self.sampler.select_samples(model, unlabeled_loader, unlabeled_set, num_samples, seed=seed)
         elif self.strategy_name == "Entropy":
             # Entropy just needs the local model
-            return self.sampler.select_samples(model, unlabeled_loader, unlabeled_set, num_samples)
+            return self.sampler.select_samples(model, unlabeled_loader, unlabeled_set, num_samples, seed=seed)
         elif self.strategy_name == "Random":
-            return self.sampler.select_samples(model, unlabeled_loader, unlabeled_set, num_samples)
+            return self.sampler.select_samples(model, unlabeled_loader, unlabeled_set, num_samples, seed=seed)
         elif self.strategy_name == "LOGO":
-            return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples)
+            return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, seed=seed)
         else:
             raise ValueError(f"Unknown strategy: {self.strategy_name}")
