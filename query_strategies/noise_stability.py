@@ -19,20 +19,40 @@ class NoiseStabilitySampler:
         self.noise_scale = noise_scale
         self.num_sampling = num_sampling
 
-    def add_noise_to_weights(self, model):
+    def add_noise_to_weights(self, model, seed=None):
         """
         Adds Gaussian noise to model weights.
         """
         with torch.no_grad():
+            # Create a deterministic generator if seed is provided
+            generator = None
+            if seed is not None:
+                generator = torch.Generator(device=self.device)
+                generator.manual_seed(seed)
+
+
             for param in model.parameters():
                 if param.requires_grad:
                     # Calculate normalization factor to keep relative noise scale consistent
                     param_norm = param.norm()
                     if param_norm > 0:  # Avoid division by zero
-                        noise = torch.randn_like(param) * self.noise_scale * param_norm / torch.norm(torch.randn_like(param))
-                        param.add_(noise)
+                        # Generate noise with the same generator (or without for backward compatibility)
+                        if generator is not None:
+                            noise1 = torch.randn_like(param, generator=generator)
+                            # Need a different seed for the second randn to avoid division by zero
+                            gen2 = torch.Generator(device=self.device)
+                            gen2.manual_seed(seed + param_idx + 10000)
+                            noise2 = torch.randn_like(param, generator=gen2)
+                            noise_norm = torch.norm(noise2)
+                        else:
+                            noise1 = torch.randn_like(param)
+                            noise_norm = torch.norm(torch.randn_like(param))
+                            
+                        if noise_norm > 0:  # Prevent division by zero
+                            noise = noise1 * self.noise_scale * param_norm / noise_norm
+                            param.add_(noise)
 
-    def compute_uncertainty(self, model, unlabeled_loader):
+    def compute_uncertainty(self, model, unlabeled_loader, seed=None):
         """
         Computes feature deviations before and after adding noise.
 
@@ -49,8 +69,10 @@ class NoiseStabilitySampler:
             # Get original outputs and features
             outputs, features = self.get_all_outputs(model, unlabeled_loader)
             if features is None:
-                # Fallback to random uncertainty if feature extraction fails
-                return torch.rand(len(unlabeled_loader.dataset)).to(self.device)
+                error_msg = "Feature extraction failed - model may not return feature embeddings"
+                print(error_msg)
+                raise ValueError(error_msg)
+                
             
             # Initialize difference tensor
             diffs = torch.zeros_like(features).to(self.device)
@@ -59,6 +81,8 @@ class NoiseStabilitySampler:
             for i in range(self.num_sampling):
                 # Create a deep copy of the model to avoid modifying the original
                 noisy_model = copy.deepcopy(model).to(self.device)
+                # Use a deterministic seed derived from the base seed
+                noise_seed = None if seed is None else seed + i
                 self.add_noise_to_weights(noisy_model)
                 noisy_model.eval()
                 
@@ -79,9 +103,9 @@ class NoiseStabilitySampler:
             return diffs.mean(dim=1)
         
         except Exception as e:
-            print(f"Error in compute_uncertainty: {str(e)}")
-            # Fallback to random uncertainty
-            return torch.rand(len(unlabeled_loader.dataset)).to(self.device)
+            error_msg = f"Error in compute_uncertainty: {str(e)}"
+            print(error_msg)
+            raise ValueError(error_msg) from e
 
     def get_all_outputs(self, model, dataloader):
         """
@@ -130,7 +154,9 @@ class NoiseStabilitySampler:
                     continue
 
         if not outputs_list or not features_list:
-            return None, None
+            error_msg = "No valid outputs or features collected"
+            print(error_msg)
+            raise ValueError(error_msg)
             
         try:
             return torch.cat(outputs_list, dim=0), torch.cat(features_list, dim=0)
@@ -159,13 +185,13 @@ class NoiseStabilitySampler:
             uncertainty = self.compute_uncertainty(model, unlabeled_loader)
             
             if uncertainty is None or len(uncertainty) != len(unlabeled_set):
-                # Fallback to random selection
-                print("Warning: Uncertainty computation failed or returned incorrect size. Using random selection.")
-                selected_indices = np.random.choice(len(unlabeled_set), num_samples, replace=False)
-            else:
-                # Select indices with highest uncertainty
-                sorted_indices = torch.argsort(uncertainty, descending=True).cpu().numpy()
-                selected_indices = sorted_indices[:num_samples]
+                error_msg = f"Uncertainty computation failed or returned incorrect size. Expected {len(unlabeled_set)}, got {len(uncertainty) if uncertainty is not None else 'None'}"
+                print(error_msg)
+                raise ValueError(error_msg)
+                
+            # Select indices with highest uncertainty
+            sorted_indices = torch.argsort(uncertainty, descending=True).cpu().numpy()
+            selected_indices = sorted_indices[:num_samples]
             
             # Map to actual sample indices
             selected_samples = [unlabeled_set[i] for i in selected_indices]
@@ -174,10 +200,6 @@ class NoiseStabilitySampler:
             return selected_samples, remaining_unlabeled
             
         except Exception as e:
-            print(f"Error in sample selection: {str(e)}")
-            # Fallback to random selection
-            selected_indices = np.random.choice(len(unlabeled_set), num_samples, replace=False)
-            selected_samples = [unlabeled_set[i] for i in selected_indices]
-            remaining_unlabeled = [idx for i, idx in enumerate(unlabeled_set) if i not in selected_indices]
-            
-            return selected_samples, remaining_unlabeled
+            error_msg = f"Error in sample selection: {str(e)}"
+            print(error_msg)
+            raise ValueError(error_msg) from e
