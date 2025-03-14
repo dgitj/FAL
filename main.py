@@ -131,15 +131,32 @@ def train_epoch_client_distil(selected_clients_id, models, criterion, optimizers
     kld = nn.KLDivLoss(reduce=False)
 
     for c in selected_clients_id:
-        client_rng = np.random.RandomState(trial_seed + c * 1000 + comm * 10)	
-        torch_gen = torch.Generator(device=device)
-        torch_gen.manual_seed(trial_seed + c * 1000 + comm * 10)
+        client_seed = int(trial_seed + c * 1000 + comm * 10)
+        # Set global PyTorch random state (same as vanilla)
+        torch.manual_seed(client_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(client_seed)
+        
+        seed_value = int(trial_seed + c * 1000 + comm * 10)
+
+         # Set NumPy random state
+        client_rng = np.random.RandomState(client_seed)
+        
+
 
         mod = models['clients'][c]
         mod.train()
         unlab_set = read_data(dataloaders['unlab-private'][c])
 
         for batch_idx, data in enumerate(tqdm(dataloaders['train-private'][c], leave=False, total=len(dataloaders['train-private'][c]))):
+            # Set batch-specific seeds (same approach as vanilla)
+            batch_seed = int(client_seed + batch_idx)
+            
+            # Set batch-specific torch seeds
+            torch.manual_seed(batch_seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed(batch_seed)
+
             inputs = data[0].to(device)
             labels = data[1].to(device)
 
@@ -148,13 +165,13 @@ def train_epoch_client_distil(selected_clients_id, models, criterion, optimizers
 
             # deterministic beta sampling
             m = Beta(torch.FloatTensor([BETA[0]]).item(), torch.FloatTensor([BETA[1]]).item())
-            beta_0 = m.sample(sample_shape=torch.Size([unlab_inputs.size(0)]), generator=torch_gen).to(device)
+            beta_0 = m.sample(sample_shape=torch.Size([unlab_inputs.size(0)])).to(device)
             beta = beta_0.view(unlab_inputs.size(0), 1, 1, 1)
 
             # deterministic index selection
-            batch_seed = trial_seed + c * 10000 + comm * 1000 + batch_idx
-            idx_rng = np.random.RandomState(batch_seed)
-            indices = idx_rng.choice(unlab_inputs.size(0), size=unlab_inputs.size(0), replace=False)
+            # Use numpy RNG with batch-specific seed
+            batch_rng = np.random.RandomState(batch_seed)
+            indices = batch_rng.choice(unlab_inputs.size(0), size=unlab_inputs.size(0), replace=False)
             
             
             mixed_inputs =  beta * unlab_inputs + (1 - beta) * unlab_inputs[indices,...]
@@ -534,7 +551,8 @@ if __name__ == '__main__':
                     unlabeled_loader,                   # Unlabeled data for the client
                     c,                                  # Client ID (only for discrepancy)
                     unlabeled_set_list[c],              # List of unlabeled sample IDs
-                    add[c]                              # Number of samples to select
+                    add[c],
+                    seed=trial_seed + c * 100 + cycle * 1000                                                            # Number of samples to select
                 )
 
                 models['clients'][c].load_state_dict(server_state_dict, strict=False)

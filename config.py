@@ -14,25 +14,24 @@ DATA_ROOT = 'data/cifar-10-batches-py'
 # - "LOGO"
 
 
-ACTIVE_LEARNING_STRATEGY = "Entropy"
+ACTIVE_LEARNING_STRATEGY = "KAFAL"
 
 # random seed
 SEED = 42
 TRIAL_SEED_OFFSET = 2000000
 
-# dirichlet partition seed
-SEED = 42
+# dirichlet partition non-iid level
 ALPHA = 0.1
 
 # setting
 BUDGET  = 2500
 BASE = 5000
-EPOCH=40
-COMMUNICATION=50
-CYCLES =6
+EPOCH=2
+COMMUNICATION=2
+CYCLES=2
 RATIO=0.8
 CLIENTS=10
-TRIALS=1
+TRIALS=2
 LOCAL_MODEL_UPDATE = "Vanilla" # Options are "Vanilla" and "KFCU"  
 
 

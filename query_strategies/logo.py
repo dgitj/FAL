@@ -87,7 +87,7 @@ class LoGoSampler:
             print(error_msg)
             raise RuntimeError(error_msg) from e
 
-    def macro_micro_clustering(self, model_server, unlabeled_loader, embeddings, original_indices, num_samples):
+    def macro_micro_clustering(self, model_server, unlabeled_loader, embeddings, original_indices, num_samples, seed=None):
         """
         Performs LoGo's macro (clustering) and micro (uncertainty-based selection) steps.
 
@@ -111,7 +111,8 @@ class LoGoSampler:
         
         try:
             # Macro step: K-Means clustering
-            kmeans = KMeans(n_clusters=num_clusters, random_state=0, n_init=10)
+            kmeans_seed = seed if seed is not None else 0
+            kmeans = KMeans(n_clusters=num_clusters, random_state=kmeans_seed, n_init=10)
             cluster_labels = kmeans.fit_predict(embeddings.numpy())
             
             # Group samples by cluster
@@ -126,15 +127,35 @@ class LoGoSampler:
             for cluster_indices in clusters:
                 if not cluster_indices:
                     continue
+                # Create a deterministic worker_init_fn if seed is provided
+                worker_init_fn = None
+                if seed is not None:
+                    def worker_seed_fn(worker_id):
+                        worker_seed = seed + worker_id
+                        np.random.seed(worker_seed)
+                        torch.manual_seed(worker_seed)
+                        if torch.cuda.is_available():
+                            torch.cuda.manual_seed(worker_seed)
+                    worker_init_fn = worker_seed_fn
                     
-                # Create a loader for this cluster
+                # Create a deterministic generator if seed is provided
+                generator = None
+                if seed is not None:
+                    generator = torch.Generator()
+                    generator.manual_seed(seed)
+                    
+                # Create loader for this cluster with deterministic settings
                 cluster_subset = torch.utils.data.Subset(unlabeled_loader.dataset, cluster_indices)
                 cluster_loader = torch.utils.data.DataLoader(
                     cluster_subset, 
                     batch_size=min(32, len(cluster_indices)), 
-                    shuffle=False
+                    shuffle=False,  # Keep order deterministic
+                    num_workers=0,  # Use single process for reliability
+                    worker_init_fn=worker_init_fn,
+                    generator=generator
                 )
                 
+
                 # Calculate uncertainty for each sample in the cluster
                 max_uncertainty = -float('inf')
                 most_uncertain_sample = None
@@ -172,7 +193,7 @@ class LoGoSampler:
             print(error_msg)
             raise RuntimeError(error_msg) from e
 
-    def select_samples(self, model, model_server, unlabeled_loader, c, unlabeled_set, num_samples):
+    def select_samples(self, model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, seed=None):
         """
         Selects samples using the LoGo strategy with robust index tracking.
 
@@ -223,7 +244,8 @@ class LoGoSampler:
                 unlabeled_loader, 
                 valid_embeddings, 
                 valid_indices, 
-                num_samples
+                num_samples,
+                seed
             )
             
             # Check if we got enough samples
