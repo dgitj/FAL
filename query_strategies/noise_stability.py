@@ -164,7 +164,7 @@ class NoiseStabilitySampler:
             print(f"Error concatenating results: {str(e)}")
             return None, None
 
-    def select_samples(self, model, unlabeled_loader, unlabeled_set, num_samples):
+    def select_samples(self, model, unlabeled_loader, unlabeled_set, num_samples, seed=None):
         """
         Selects the most uncertain samples based on feature deviation.
 
