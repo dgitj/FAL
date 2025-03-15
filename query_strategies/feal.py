@@ -143,7 +143,7 @@ class FEALSampler:
         ranked_orig_indices = remaining_orig_indices + chosen_orig_indices
         return ranked_orig_indices
 
-    def select_samples(self, global_model, local_model, unlabeled_loader, unlabeled_set, num_samples):
+    def select_samples(self, global_model, local_model, unlabeled_loader, unlabeled_set, num_samples, seed=None):
         """
         Selects samples with FEAL strategy using proper index mapping.
 
