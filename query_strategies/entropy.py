@@ -59,7 +59,7 @@ class EntropySampler:
 
         return entropy_scores
         
-    def select_samples(self, model, unlabeled_loader, unlabeled_set, num_samples):
+    def select_samples(self, model, unlabeled_loader, unlabeled_set, num_samples, seed=None):
         """
         Selects the samples with the highest entropy.
         Args:

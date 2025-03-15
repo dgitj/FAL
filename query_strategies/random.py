@@ -26,7 +26,6 @@ class RandomSampler:
         if seed is not None:
             # Use numpy's RandomState for more control
             rng = np.random.RandomState(seed)
-        
             indices = rng.choice(len(unlabeled_set), num_to_select, replace=False)
             
             # Select the corresponding samples
@@ -38,4 +37,6 @@ class RandomSampler:
             # Get remaining samples deterministically
             remaining_unlabeled = [idx for idx in unlabeled_set if idx not in selected_samples]
 
+        remaining_unlabeled = [idx for idx in unlabeled_set if idx not in selected_samples]
+        
         return selected_samples, remaining_unlabeled
