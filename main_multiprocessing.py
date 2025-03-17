@@ -6,11 +6,8 @@ import json
 import time
 import importlib
 import functools
-
-import multiprocessing as mp
-from multiprocessing.dummy import Pool as ThreadPool
-import torch.multiprocessing as mp
-from concurrent.futures import ThreadPoolExecutor
+import multiprocessing
+from multiprocessing import Pool
 
 # Torch
 import torch
@@ -37,7 +34,6 @@ print(f"Using device: {device}")
 
 from query_strategies.strategy_manager import StrategyManager
 
-
 # Model
 import models.preact_resnet as resnet
 
@@ -59,6 +55,7 @@ def set_all_seeds(seed):
         torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+
 def seed_worker_fn(base_seed, worker_id):
     """Sets unique seed for each dataloader worker"""
     worker_seed = base_seed + worker_id
@@ -96,8 +93,6 @@ cifar10_train = CIFAR10(cifar10_dataset_dir, train=True, download=True, transfor
 cifar10_test  = CIFAR10(cifar10_dataset_dir, train=False, download=True, transform=cifar10_test_transform)
 cifar10_select = CIFAR10(cifar10_dataset_dir, train=True, download=True, transform=cifar10_test_transform)
 
-
-
 class BSMLoss(nn.Module):
     """
     balanced softmax loss
@@ -107,19 +102,15 @@ class BSMLoss(nn.Module):
     def __init__(self):
         super().__init__()
 
-
     def log_softmax_weighted(self, x, target, loss_weights):
         c = x.max()
         diff = x - c
         target_weight = loss_weights[target]
         logsumexp = torch.log((loss_weights * torch.exp(diff)))
-        print('target_weight',target_weight.size())
-        print('diff',diff.size())
         return torch.log(target_weight).unsqueeze(0).repeat(x.size(0),1) - diff - logsumexp
 
     def forward(self, logits, target, loss_weights):
         log_probabilities = self.log_softmax_weighted(logits, target = target, loss_weights = loss_weights)
-
         return -self.class_weights.index_select(0, target) * log_probabilities.index_select(-1, target).diag()
 
 def read_data(dataloader):
@@ -127,188 +118,256 @@ def read_data(dataloader):
         for data in dataloader:
             yield data
 
-
 iters = 0
 
-# Add to imports at the top of main.py
-from concurrent.futures import ThreadPoolExecutor
-import copy
-
-def train_single_client(c, selected_clients_id, models, criterion, optimizers, 
-                        dataloaders, loss_weight_list, com, trial_seed, epoch):
-    """Train a single client in a thread-safe manner"""
-    
-    # Set client-specific seed for determinism
-    if LOCAL_MODEL_UPDATE == "Vanilla":
-        client_seed = trial_seed + c * 1000 + epoch
-    else:  # KCFU
-        client_seed = int(trial_seed + c * 1000 + com * 10 + epoch)
-    
-    # Set random seeds
-    torch.manual_seed(client_seed)
-    np.random.seed(client_seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(client_seed)
-    
-    # Get thread-local model copy
-    model = copy.deepcopy(models['clients'][c])
-    model.train()
-    
-    if LOCAL_MODEL_UPDATE == "Vanilla":
-        # Vanilla training
-        for batchidx, data in enumerate(dataloaders['train-private'][c]):
-            # Set batch-specific seeds
-            batch_seed = client_seed + batchidx
-            torch.manual_seed(batch_seed)
-            np.random.seed(batch_seed)
-            
-            inputs = data[0].to(device)
-            labels = data[1].to(device)
-            
-            # Forward pass
-            scores, _ = model(inputs)
-            loss = torch.sum(criterion(scores, labels)) / labels.size(0)
-            
-            # Backward and optimize
-            optimizers['clients'][c].zero_grad()
-            loss.backward()
-            optimizers['clients'][c].step()
-    else:  # KCFU
-        # Create thread-local server model
-        server_model = copy.deepcopy(models['server'])
-        server_model.eval()
+# Function to train a single client (for parallel execution)
+def train_client_worker(client_id, client_model_state, server_model_state, labeled_set, 
+                        unlabeled_set, loss_weight_list, selected_clients_id, com, 
+                        num_epochs, trial_seed, mode="Vanilla"):
+    """Trains a single client and returns its updated model state dict"""
+    try:
+        # Set device (each worker should use its own device or CPU)
+        worker_device = torch.device("cpu")  # Use CPU for parallel workers
         
-        kld = nn.KLDivLoss(reduce=False)
-        unlab_iter = iter(dataloaders['unlab-private'][c])
+        # Initialize client model with server state
+        model = resnet.preact_resnet8_cifar(num_classes=10).to(worker_device)
+        model.load_state_dict(server_model_state)
+        model.train()
         
-        for batchidx, data in enumerate(dataloaders['train-private'][c]):
-            batch_seed = client_seed + batchidx
-            torch.manual_seed(batch_seed)
-            np.random.seed(batch_seed)
+        # Initialize optimizer and scheduler
+        optimizer = optim.SGD(model.parameters(), lr=LR, momentum=MOMENTUM, weight_decay=WDECAY)
+        scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=MILESTONES)
+        criterion = nn.CrossEntropyLoss(reduction='none')
+        
+        # Create dataloaders
+        client_seed = int(trial_seed + client_id * 1000 + com * 10)
+        
+        # Set client-specific seeds
+        torch.manual_seed(client_seed)
+        np.random.seed(client_seed)
+        random.seed(client_seed)
+        
+        client_worker_init_fn = get_seed_worker(client_seed)
+        
+        # For labeled data loaders
+        g_labeled = torch.Generator()
+        g_labeled.manual_seed(client_seed + 10000)
+        
+        # For unlabeled data loaders
+        g_unlabeled = torch.Generator()
+        g_unlabeled.manual_seed(client_seed + 20000)
+        
+        train_loader = DataLoader(cifar10_train, batch_size=BATCH,
+                           sampler=SubsetRandomSampler(labeled_set),
+                           num_workers=0, worker_init_fn=client_worker_init_fn,
+                           generator=g_labeled, pin_memory=False)
+        
+        if mode == "KCFU":
+            unlab_loader = DataLoader(cifar10_train, batch_size=BATCH,
+                                sampler=SubsetRandomSampler(unlabeled_set),
+                                num_workers=0, worker_init_fn=client_worker_init_fn,
+                                generator=g_unlabeled, pin_memory=False)
+            unlab_set = read_data(unlab_loader)
+        
+        # Train for the specified number of epochs
+        for epoch in range(num_epochs):
+            # Set seed for this epoch
+            batch_epoch_seed = client_seed + epoch
+            torch.manual_seed(batch_epoch_seed)
+            np.random.seed(batch_epoch_seed)
+            random.seed(batch_epoch_seed)
             
-            # Try to get next unlabeled batch
-            try:
-                unlab_data = next(unlab_iter)
-            except StopIteration:
-                unlab_iter = iter(dataloaders['unlab-private'][c])
-                unlab_data = next(unlab_iter)
+            if mode == "Vanilla":
+                # Train with vanilla method
+                for batch_idx, data in enumerate(train_loader):
+                    # Batch-specific seed
+                    batch_seed = batch_epoch_seed + batch_idx
+                    torch.manual_seed(batch_seed)
+                    np.random.seed(batch_seed)
+                    random.seed(batch_seed)
+                    
+                    # Move data to device
+                    inputs, labels = data[0].to(worker_device), data[1].to(worker_device)
+                    
+                    # Forward pass
+                    scores, _ = model(inputs)
+                    loss = torch.sum(criterion(scores, labels)) / labels.size(0)
+                    
+                    # Backward pass
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+            
+            elif mode == "KCFU":
+                # KCFU training method
+                kld = nn.KLDivLoss(reduce=False)
+                server_model = resnet.preact_resnet8_cifar(num_classes=10).to(worker_device)
+                server_model.load_state_dict(server_model_state)
+                server_model.eval()
                 
-            inputs = data[0].to(device)
-            labels = data[1].to(device)
-            unlab_inputs = unlab_data[0].to(device)
+                for batch_idx, data in enumerate(train_loader):
+                    # Batch-specific seed
+                    batch_seed = batch_epoch_seed + batch_idx
+                    torch.manual_seed(batch_seed)
+                    np.random.seed(batch_seed)
+                    random.seed(batch_seed)
+                    
+                    # Move data to device
+                    inputs, labels = data[0].to(worker_device), data[1].to(worker_device)
+                    
+                    unlab_data = next(unlab_set)
+                    unlab_inputs = unlab_data[0].to(worker_device)
+
+                    # deterministic beta sampling
+                    m = Beta(torch.FloatTensor([BETA[0]]).item(), torch.FloatTensor([BETA[1]]).item())
+                    batch_rng = np.random.RandomState(batch_seed)
+                    beta_samples = batch_rng.beta(BETA[0], BETA[1], size=unlab_inputs.size(0))
+                    beta_0 = torch.FloatTensor(beta_samples).to(worker_device)
+                    beta = beta_0.view(unlab_inputs.size(0), 1, 1, 1)
+
+                    # deterministic index selection
+                    indices = batch_rng.choice(unlab_inputs.size(0), size=unlab_inputs.size(0), replace=False)
+                    
+                    mixed_inputs = beta * unlab_inputs + (1 - beta) * unlab_inputs[indices,...]
+
+                    scores, _ = model(inputs)
+
+                    optimizer.zero_grad()
+
+                    with torch.no_grad():
+                        scores_unlab_t, _ = server_model(mixed_inputs)
+
+                    scores_unlab, _ = model(mixed_inputs)
+                    _, pred_labels = torch.max((scores_unlab_t.data), 1)
+
+                    # find the \Gamma weight matrix
+                    client_loss_weight = torch.tensor(loss_weight_list[client_id], dtype=torch.float32).to(worker_device)
+                    mask = (client_loss_weight > 0).float()
+                    weight_ratios = client_loss_weight.sum() / (client_loss_weight + 1e-6)
+                    weight_ratios *= mask
+                    weights = beta_0 * (weight_ratios / weight_ratios.sum())[pred_labels] + (1-beta_0)*(weight_ratios / weight_ratios.sum())[pred_labels[indices]]
+
+                    # compensatory loss
+                    distil_loss = int(com>0)*(weights*kld(F.log_softmax(scores_unlab, -1), F.softmax(scores_unlab_t.detach(), -1)).mean(1)).mean()
+
+                    spc = client_loss_weight
+                    spc = spc.unsqueeze(0).expand(labels.size(0), -1)
+                    scores = scores + spc.log()
+
+                    # client loss
+                    loss = torch.sum(criterion(scores, labels)) / labels.size(0)
+
+                    # KCFU loss
+                    (loss + distil_loss).backward()
+                    optimizer.step()
             
-            # Deterministic beta sampling
-            m = Beta(torch.FloatTensor([BETA[0]]).item(), torch.FloatTensor([BETA[1]]).item())
-            beta_0 = m.sample(sample_shape=torch.Size([unlab_inputs.size(0)])).to(device)
-            beta = beta_0.view(unlab_inputs.size(0), 1, 1, 1)
-            
-            # Deterministic index selection
-            batch_rng = np.random.RandomState(batch_seed)
-            indices = batch_rng.choice(unlab_inputs.size(0), size=unlab_inputs.size(0), replace=False)
-            mixed_inputs = beta * unlab_inputs + (1 - beta) * unlab_inputs[indices,...]
-            
-            scores, _ = model(inputs)
-            optimizers['clients'][c].zero_grad()
-            
-            with torch.no_grad():
-                scores_unlab_t, _ = server_model(mixed_inputs)
-            
-            scores_unlab, _ = model(mixed_inputs)
-            _, pred_labels = torch.max((scores_unlab_t.data), 1)
-            
-            # Calculate weights
-            mask = (loss_weight_list[c] > 0).float()
-            weight_ratios = loss_weight_list[c].sum() / (loss_weight_list[c] + 1e-6)
-            weight_ratios *= mask
-            weights = beta_0 * (weight_ratios / weight_ratios.sum())[pred_labels] + \
-                    (1-beta_0)*(weight_ratios / weight_ratios.sum())[pred_labels[indices]]
-            
-            # Compensatory loss
-            distil_loss = int(com>0)*(weights*kld(F.log_softmax(scores_unlab, -1), 
-                            F.softmax(scores_unlab_t.detach(), -1)).mean(1)).mean()
-            
-            spc = loss_weight_list[c]
-            spc = spc.unsqueeze(0).expand(labels.size(0), -1)
-            scores = scores + spc.log()
-            
-            # Client loss
-            loss = torch.sum(criterion(scores, labels)) / labels.size(0)
-            
-            # Total loss
-            (loss + distil_loss).backward()
-            optimizers['clients'][c].step()
+            # Step the scheduler
+            scheduler.step()
+        
+        # Return the final state dict
+        return model.state_dict()
     
-    return c, model.state_dict()
+    except Exception as e:
+        print(f"Error in worker process for client {client_id}: {str(e)}")
+        # Return empty state dict on error
+        return {}
+
+def test(models, dataloaders, mode='test'):
+    models['server'].eval()
+    total = 0
+    correct = 0
+    with torch.no_grad():
+        for (inputs, labels) in dataloaders[mode]:
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+
+            scores, _ = models['server'](inputs)
+            _, preds = torch.max(scores.data, 1)
+            total += labels.size(0)
+            correct += (preds == labels).sum().item()
+
+    return 100 * correct / total
+
+# Initialize a global pool
+def init_worker():
+    """Initialize worker process"""
+    # Force CPU use for workers to avoid CUDA issues
+    import torch
+    torch.set_num_threads(1)  # Limit CPU threads per worker
 
 def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, trial_seed):
     print('>> Train a Model.')
 
-    for com in range(COMMUNICATION):
-        # Deterministic client selection
-        rng = np.random.RandomState(trial_seed + com * 100)
+    # Create process pool
+    num_workers = min(multiprocessing.cpu_count(), CLIENTS)
+    print(f"Using {num_workers} worker processes for parallel training")
+    
+    with Pool(processes=num_workers, initializer=init_worker) as pool:
+        for com in range(COMMUNICATION):
+            # Deterministic client selection
+            rng = np.random.RandomState(trial_seed + com * 100)
 
-        if com < COMMUNICATION-1:
-            selected_clients_id = rng.choice(CLIENTS, int(CLIENTS * RATIO), replace=False)
-        else:
-            selected_clients_id = list(range(CLIENTS))
-
-        server_state_dict = models['server'].state_dict()
-
-        # Broadcast server state to clients
-        for c in selected_clients_id:
-            models['clients'][c].load_state_dict(server_state_dict, strict=False)
-
-        # Local updates
-        start = time.time()
-        
-        for epoch in range(num_epochs):
-            # Use ThreadPoolExecutor for parallelism (avoids multiprocessing issues)
-            max_workers = min(len(selected_clients_id), mp.cpu_count() * 2)
-            print(f"Using {max_workers} threads for parallel client training")
-            
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Submit all client training tasks
-                futures = []
-                for c in selected_clients_id:
-                    future = executor.submit(
-                        train_single_client, 
-                        c, selected_clients_id, models, criterion, optimizers, 
-                        dataloaders, loss_weight_list, com, trial_seed, epoch
-                    )
-                    futures.append(future)
+            if com < COMMUNICATION-1:
+                selected_clients_id = rng.choice(CLIENTS, int(CLIENTS * RATIO), replace=False)
+            else:
+                selected_clients_id = range(CLIENTS)
                 
-                # Collect results as they complete
-                for future in futures:
-                    c, state_dict = future.result()
-                    models['clients'][c].load_state_dict(state_dict)
+            # Get server model state to broadcast to clients
+            server_state_dict = models['server'].state_dict()
             
-            # Apply schedulers
+            # Prepare training tasks for parallel execution
+            training_tasks = []
             for c in selected_clients_id:
-                schedulers['clients'][c].step()
+                # Create a task for each client
+                if LOCAL_MODEL_UPDATE == "Vanilla":
+                    task = (c, models['clients'][c].state_dict(), server_state_dict, 
+                            dataloaders['labeled_sets'][c], dataloaders['unlabeled_sets'][c],
+                            loss_weight_list, selected_clients_id, com, num_epochs, trial_seed, "Vanilla")
+                else:  # KCFU
+                    task = (c, models['clients'][c].state_dict(), server_state_dict, 
+                            dataloaders['labeled_sets'][c], dataloaders['unlabeled_sets'][c],
+                            loss_weight_list, selected_clients_id, com, num_epochs, trial_seed, "KCFU")
+                training_tasks.append(task)
             
-            print(f'Epoch: {epoch + 1}/{num_epochs} | Communication: {com + 1}/{COMMUNICATION} | Cycle: {cycle + 1}/{CYCLES}')    
-        
-        end = time.time()
-        print('time epoch:',(end-start)/num_epochs)
+            # Execute training in parallel
+            start = time.time()
+            print(f"Starting parallel training for {len(training_tasks)} clients...")
+            results = pool.starmap(train_client_worker, training_tasks)
+            end = time.time()
+            print('Average time per epoch:', (end-start)/num_epochs)
+            
+            # Update client models with trained weights
+            local_states = []
+            for idx, c in enumerate(selected_clients_id):
+                if results[idx]:  # Check if we got a valid result
+                    # Load the trained weights back to the original model
+                    models['clients'][c].load_state_dict(results[idx])
+                    local_states.append(copy.deepcopy(results[idx]))
+                else:
+                    print(f"Warning: No valid result for client {c}, using original state")
+                    local_states.append(copy.deepcopy(models['clients'][c].state_dict()))
 
-        # Aggregation (unchanged)
-        local_states = [copy.deepcopy(models['clients'][c].state_dict()) for c in selected_clients_id]
-        selected_data_num = data_num[selected_clients_id]
-        model_state = local_states[0]
+            # Aggregation (identical to original code)
+            selected_data_num = data_num[selected_clients_id]
+            model_state = local_states[0]
 
-        for key in local_states[0]:
-            model_state[key] = model_state[key]*selected_data_num[0]
-            for i in range(1, len(selected_clients_id)):
-                model_state[key] = model_state[key].float() + local_states[i][key].float() * selected_data_num[i]
-            model_state[key] = model_state[key].float() / np.sum(selected_data_num)
-        models['server'].load_state_dict(model_state, strict=False)
+            for key in local_states[0]:
+                model_state[key] = model_state[key]*selected_data_num[0]
+                for i in range(1, len(selected_clients_id)):
+                    model_state[key] = model_state[key].float() + local_states[i][key].float() * selected_data_num[i]
+                model_state[key] = model_state[key].float() / np.sum(selected_data_num)
+            
+            models['server'].load_state_dict(model_state, strict=False)
+            
+            print(f'Communication round: {com + 1}/{COMMUNICATION} | Cycle: {cycle + 1}/{CYCLES}')
 
-    print('>> Finished.')
+    print('>> Training Finished.')
 
 ##
 # Main
 if __name__ == '__main__':
-
+    multiprocessing.set_start_method('spawn', force=True)  # Required for CUDA tensors sharing
+    
     accuracies = [[] for _ in range(TRIALS)]
 
     indices = list(range(NUM_TRAIN))
@@ -316,10 +375,6 @@ if __name__ == '__main__':
     for id in indices:
         id2lab.append(cifar10_train[id][1])
     id2lab = np.array(id2lab)
-
-
-    # with open(f"distribution/alpha0.1_cifar10_{CLIENTS}clients_var0.1_seed42.json") as json_file:
-    #    data_splits = json.load(json_file)
 
     print(f"Generating Dirichlet partition with alpha {ALPHA}, seed {SEED} for {CLIENTS} clients...")
 
@@ -335,10 +390,6 @@ if __name__ == '__main__':
         unlabeled_set_list = []
         pseudo_set = []
 
-        private_train_loaders = []
-        private_unlab_loaders = []
-        num_classes = 10 # CIFAR10
-
         rest_data = indices.copy()
 
         print('Query Strategy:', ACTIVE_LEARNING_STRATEGY)
@@ -347,7 +398,7 @@ if __name__ == '__main__':
         print('Number of communication rounds:', COMMUNICATION)
 
         num_per_client = int(len(rest_data) / CLIENTS)
-        resnet8 = resnet.preact_resnet8_cifar(num_classes=num_classes)
+        resnet8 = resnet.preact_resnet8_cifar(num_classes=10)
         client_models = []
         data_list = []
         total_data_num = []
@@ -364,17 +415,15 @@ if __name__ == '__main__':
 
         # prepare initial data pools
         for c in range(CLIENTS):
-
             client_worker_init_fn = get_seed_worker(trial_seed + c * 100)
 
-                        # For labeled data loaders
+            # For labeled data loaders
             g_labeled = torch.Generator()
             g_labeled.manual_seed(trial_seed + c * 100 + 10000)
 
             # For unlabeled data loaders
             g_unlabeled = torch.Generator()
             g_unlabeled.manual_seed(trial_seed + c * 100 + 20000)
-
 
             data_list.append(data_splits[c])
 
@@ -388,58 +437,33 @@ if __name__ == '__main__':
             # Apply the shuffled indices
             data_list[c] = [data_splits[c][i] for i in shuffled_indices]
 
-            # random.shuffle(data_list[c]) # Old code without reproducibility
-            # public_set.extend(data_list[c][-base:])
             labeled_set_list.append(data_list[c][:base[c]])
-
-            # Debug statements
-            # print(f"Client {c}: First 5 selected indices: {data_list[c][:5]}")
-            # print(f"Client {c}: Initial labeled set size: {len(labeled_set_list[c])}")
-            # print(f"Client {c}: Checksum of all selected indices: {sum(labeled_set_list[c]) % 10000}")
 
             values, counts = np.unique(id2lab[np.array(data_list[c])], return_counts=True)
             dictionary = dict(zip(values, counts))
-            ratio = np.zeros(num_classes)
+            ratio = np.zeros(10)  # num_classes = 10
             ratio[values] = counts
             ratio /= np.sum(counts)
             data_ratio_list.append(ratio)
-            # print('client {}, ratio {}'.format(c, ratio))
 
             values, counts = np.unique(id2lab[np.array(labeled_set_list[c])], return_counts=True)
-            ratio = np.zeros(num_classes)
+            ratio = np.zeros(10)  # num_classes = 10
             ratio[values] = counts
-            loss_weight_list.append(torch.tensor(ratio, dtype=torch.float32).to(device))
-            # loss_weight_list.append(torch.tensor(ratio).to(device).float())
-
-
+            loss_weight_list.append(ratio)
 
             data_num.append(len(labeled_set_list[c]))
             unlabeled_set_list.append(data_list[c][base[c]:])
 
-            private_train_loaders.append(DataLoader(cifar10_train, batch_size=BATCH,
-                           sampler=SubsetRandomSampler(labeled_set_list[c]),
-                            num_workers= 4,
-                            worker_init_fn=client_worker_init_fn,
-                            generator=g_labeled,
-                            pin_memory=True))
-            private_unlab_loaders.append(DataLoader(cifar10_train, batch_size=BATCH,
-                                                    sampler=SubsetRandomSampler(unlabeled_set_list[c]),
-                                                    num_workers=4,
-                                                    worker_init_fn=client_worker_init_fn,
-                                                    generator=g_unlabeled,
-                                                    pin_memory=True))
-
             client_models.append(copy.deepcopy(resnet8).to(device))
+        
         data_num = np.array(data_num)
-
 
         # added strategy manager
         strategy_manager = StrategyManager(
             strategy_name=ACTIVE_LEARNING_STRATEGY, 
-            loss_weight_list=loss_weight_list,
+            loss_weight_list=[torch.tensor(w, dtype=torch.float32).to(device) for w in loss_weight_list],
             device=device
         )
-
 
         del resnet8
 
@@ -454,11 +478,14 @@ if __name__ == '__main__':
             pin_memory=True
         )
 
-        dataloaders  = {'train-private': private_train_loaders,'unlab-private': private_unlab_loaders, 'test': test_loader}
+        dataloaders = {
+            'labeled_sets': labeled_set_list,
+            'unlabeled_sets': unlabeled_set_list,
+            'test': test_loader
+        }
         
         # Model
-
-        models      = {'clients': client_models, 'server': None}
+        models = {'clients': client_models, 'server': None}
 
         torch.backends.cudnn.benchmark = False
 
@@ -466,8 +493,7 @@ if __name__ == '__main__':
 
         # Active learning cycles
         for cycle in range(CYCLES):
-
-            server = resnet.preact_resnet8_cifar(num_classes=num_classes).to(device)
+            server = resnet.preact_resnet8_cifar(num_classes=10).to(device)
             models['server'] = server
             criterion = nn.CrossEntropyLoss(reduction='none')
 
@@ -476,19 +502,16 @@ if __name__ == '__main__':
 
             for c in range(CLIENTS):
                 optim_clients.append(optim.SGD(models['clients'][c].parameters(), lr=LR,
-                                    momentum=MOMENTUM, weight_decay=WDECAY))
+                                   momentum=MOMENTUM, weight_decay=WDECAY))
                 sched_clients.append(lr_scheduler.MultiStepLR(optim_clients[c], milestones=MILESTONES))
 
-            optim_server  = optim.SGD(models['server'].parameters(), lr=LR,
-                                        momentum=MOMENTUM, weight_decay=WDECAY)
-
+            optim_server = optim.SGD(models['server'].parameters(), lr=LR,
+                                       momentum=MOMENTUM, weight_decay=WDECAY)
 
             sched_server = lr_scheduler.MultiStepLR(optim_server, milestones=MILESTONES)
 
             optimizers = {'clients': optim_clients, 'server': optim_server}
             schedulers = {'clients': sched_clients, 'server': sched_server}
-
-            unlabeled_loaders = []
 
             train(models, criterion, optimizers, schedulers, dataloaders, EPOCH, trial_seed)
 
@@ -496,14 +519,12 @@ if __name__ == '__main__':
             for c in range(CLIENTS):
                 total_labels += len(labeled_set_list[c])
 
-            private_train_loaders = []
             data_num = []
             loss_weight_list_2 = []
             server_state_dict = models['server'].state_dict()
 
             # Calculate sampling scores and sample for annotations.
             for c in range(CLIENTS): 
-
                 cycle_worker_init_fn = get_seed_worker(trial_seed + c * 100 + cycle * 1000)
                 g_labeled_cycle = torch.Generator()
                 g_labeled_cycle.manual_seed(trial_seed + c * 100 + cycle * 1000 + 10000)
@@ -516,20 +537,20 @@ if __name__ == '__main__':
                 unlabeled_set_list[c] = unlabeled_indices.tolist()
 
                 unlabeled_loader = DataLoader(cifar10_select, batch_size=BATCH,
-                                              sampler=SubsetSequentialSampler(unlabeled_set_list[c]),
-                                              num_workers=4, 
-                                              worker_init_fn=cycle_worker_init_fn,
-                                              generator=g_unlabeled_cycle, # not necessary but used of consistency
-                                              pin_memory=True)
+                                             sampler=SubsetSequentialSampler(unlabeled_set_list[c]),
+                                             num_workers=0, 
+                                             worker_init_fn=cycle_worker_init_fn,
+                                             generator=g_unlabeled_cycle,
+                                             pin_memory=True)
 
                 selected_samples, remaining_unlabeled = strategy_manager.select_samples(
-                    models['clients'][c],               # Client model
-                    models['server'],                   # Server model (only used for discrepancy)
-                    unlabeled_loader,                   # Unlabeled data for the client
-                    c,                                  # Client ID (only for discrepancy)
-                    unlabeled_set_list[c],              # List of unlabeled sample IDs
+                    models['clients'][c],
+                    models['server'],
+                    unlabeled_loader,
+                    c,
+                    unlabeled_set_list[c],
                     add[c],
-                    seed=trial_seed + c * 100 + cycle * 1000                                                            # Number of samples to select
+                    seed=trial_seed + c * 100 + cycle * 1000
                 )
 
                 models['clients'][c].load_state_dict(server_state_dict, strict=False)
@@ -539,27 +560,13 @@ if __name__ == '__main__':
                 unlabeled_set_list[c] = remaining_unlabeled
 
                 values, counts = np.unique(id2lab[np.array(labeled_set_list[c])], return_counts=True)
-                ratio = np.zeros(num_classes)
-
+                ratio = np.zeros(10)  # num_classes = 10
                 ratio[values] = counts
 
                 # compute new distributions
-                loss_weight_list_2.append(torch.tensor(ratio).to(device).float())
+                loss_weight_list_2.append(ratio)
                 data_num.append(len(labeled_set_list[c]))
 
-                # dataloaders with updated data 
-                private_train_loaders.append(DataLoader(cifar10_train, batch_size=BATCH,
-                                                        sampler=SubsetRandomSampler(labeled_set_list[c]),
-                                                        num_workers=4,
-                                                        worker_init_fn=cycle_worker_init_fn,
-                                                        generator=g_labeled_cycle,
-                                                        pin_memory=True))
-                private_unlab_loaders.append(DataLoader(cifar10_train, batch_size=BATCH,
-                                                        sampler=SubsetRandomSampler(unlabeled_set_list[c]),
-                                                        num_workers=4,
-                                                        worker_init_fn=cycle_worker_init_fn,
-                                                        generator=g_unlabeled_cycle,
-                                                        pin_memory=True))
             # evaluation
             acc_server = test(models, dataloaders, mode='test')
             print('Trial {}/{} || Cycle {}/{} || Labelled sets size {}: server acc {}'.format(
@@ -567,10 +574,11 @@ if __name__ == '__main__':
 
             # update distributions
             loss_weight_list = loss_weight_list_2
-            dataloaders['train-private'] = private_train_loaders
-            dataloaders['unlab-private'] = private_unlab_loaders
+            dataloaders['labeled_sets'] = labeled_set_list
+            dataloaders['unlabeled_sets'] = unlabeled_set_list
             data_num = np.array(data_num)
             accuracies[trial].append(acc_server)
+            
         print('accuracies for trial {}:'.format(trial), accuracies[trial])
 
-    print('accuracies means:',np.array(accuracies).mean(1))
+    print('accuracies means:', np.array(accuracies).mean(1))
