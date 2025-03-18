@@ -44,6 +44,36 @@ from torchvision.datasets import CIFAR10
 from config import *
 from tqdm import tqdm
 
+def debug_dataloader(loader, client_id, tag="train"):
+    """Print checksum and first few samples to verify determinism."""
+    samples = []
+    for i, (inputs, labels) in enumerate(loader):
+        if i >= 3:  # Just check first 3 batches
+            break
+        # Convert to numpy for consistent output
+        batch_samples = [(idx, lab.item()) for idx, lab in 
+                         zip(range(len(labels)), labels)]
+        samples.append(batch_samples)
+        print(f"Client {client_id}, {tag} batch {i}: First 5 samples: {batch_samples[:5]}")
+    
+    # Calculate a checksum of all indices and labels to verify consistency
+    flat_samples = [item for batch in samples for item in batch]
+    checksum = sum([idx * 10 + lab for idx, lab in flat_samples]) % 10000
+    print(f"Client {client_id}, {tag} data checksum: {checksum}")
+    return checksum
+
+def model_checksum(model):
+    """Calculate a simple checksum of model weights for comparison."""
+    state_dict = model.state_dict()
+    checksum = 0
+    for key in sorted(state_dict.keys()):
+        # Get a simple numeric representation of each parameter tensor
+        param_sum = state_dict[key].abs().sum().item()
+        # Add to checksum with a multiplier based on parameter name
+        # This ensures different parameters contribute differently
+        checksum += param_sum * hash(key) % 10000
+    return checksum % 1000000
+
 def set_all_seeds(seed):
     """Set all seeds for reproducibility"""
     random.seed(seed)
@@ -232,6 +262,7 @@ def train_epoch_client_vanilla(selected_clients_id, models, criterion, optimizer
             if torch.cuda.is_available():
                 torch.cuda.manual_seed(batch_seed)
             
+
             
             inputs = data[0].to(device)
             labels = data[1].to(device)
@@ -288,8 +319,15 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, tr
         server_state_dict = models['server'].state_dict()
 
         # broadcast
+        print("\n==== SEQUENTIAL IMPLEMENTATION - DATALOADER VERIFICATION ====")
         for c in selected_clients_id:
+            print(f"\n=== Debugging DataLoader for Client {c} ===")
+            train_checksum = debug_dataloader(dataloaders['train-private'][c], c, "train")
+            if LOCAL_MODEL_UPDATE != "Vanilla":
+                unlab_checksum = debug_dataloader(dataloaders['unlab-private'][c], c, "unlab")
+            print(f"=======================================\n") 
             models['clients'][c].load_state_dict(server_state_dict, strict=False)
+            print(f"Sequential - Client {c} model checksum before training: {model_checksum(models['clients'][c])}")
 
         # local updates
         start = time.time()
@@ -306,6 +344,7 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, tr
         end = time.time()
         print('time epoch:',(end-start)/num_epochs)
 
+        print(f"Sequential - Server model checksum before aggregation: {model_checksum(models['server'])}")
 
         # aggregation
         local_states = [
@@ -324,6 +363,7 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, tr
             # model_state[key] /= np.sum(selected_data_num)
             model_state[key] = model_state[key].float() / np.sum(selected_data_num)
         models['server'].load_state_dict(model_state, strict=False)
+        print(f"Sequential - Server model checksum after aggregation: {model_checksum(models['server'])}")
 
     print('>> Finished.')
 
@@ -387,10 +427,11 @@ if __name__ == '__main__':
 
         # prepare initial data pools
         for c in range(CLIENTS):
-
+            partition_checksum = sum(data_splits[c]) % 10000
+            print(f"Client {c} initial partition checksum: {partition_checksum}")
             client_worker_init_fn = get_seed_worker(trial_seed + c * 100)
 
-                        # For labeled data loaders
+            # For labeled data loaders
             g_labeled = torch.Generator()
             g_labeled.manual_seed(trial_seed + c * 100 + 10000)
 
@@ -410,6 +451,8 @@ if __name__ == '__main__':
 
             # Apply the shuffled indices
             data_list[c] = [data_splits[c][i] for i in shuffled_indices]
+            shuffled_checksum = sum(data_list[c]) % 10000
+            print(f"Client {c} shuffled partition checksum: {shuffled_checksum}")
 
             # random.shuffle(data_list[c]) # Old code without reproducibility
             # public_set.extend(data_list[c][-base:])
@@ -441,13 +484,13 @@ if __name__ == '__main__':
 
             private_train_loaders.append(DataLoader(cifar10_train, batch_size=BATCH,
                            sampler=SubsetRandomSampler(labeled_set_list[c]),
-                            num_workers= 4,
+                            num_workers= 0,
                             worker_init_fn=client_worker_init_fn,
                             generator=g_labeled,
                             pin_memory=True))
             private_unlab_loaders.append(DataLoader(cifar10_train, batch_size=BATCH,
                                                     sampler=SubsetRandomSampler(unlabeled_set_list[c]),
-                                                    num_workers=4,
+                                                    num_workers=0,
                                                     worker_init_fn=client_worker_init_fn,
                                                     generator=g_unlabeled,
                                                     pin_memory=True))
@@ -540,7 +583,7 @@ if __name__ == '__main__':
 
                 unlabeled_loader = DataLoader(cifar10_select, batch_size=BATCH,
                                               sampler=SubsetSequentialSampler(unlabeled_set_list[c]),
-                                              num_workers=4, 
+                                              num_workers=0, 
                                               worker_init_fn=cycle_worker_init_fn,
                                               generator=g_unlabeled_cycle, # not necessary but used of consistency
                                               pin_memory=True)
@@ -573,13 +616,13 @@ if __name__ == '__main__':
                 # dataloaders with updated data 
                 private_train_loaders.append(DataLoader(cifar10_train, batch_size=BATCH,
                                                         sampler=SubsetRandomSampler(labeled_set_list[c]),
-                                                        num_workers=4,
+                                                        num_workers=0,
                                                         worker_init_fn=cycle_worker_init_fn,
                                                         generator=g_labeled_cycle,
                                                         pin_memory=True))
                 private_unlab_loaders.append(DataLoader(cifar10_train, batch_size=BATCH,
                                                         sampler=SubsetRandomSampler(unlabeled_set_list[c]),
-                                                        num_workers=4,
+                                                        num_workers=0,
                                                         worker_init_fn=cycle_worker_init_fn,
                                                         generator=g_unlabeled_cycle,
                                                         pin_memory=True))
