@@ -8,7 +8,7 @@ from torchvision.datasets import CIFAR10, CIFAR100, SVHN
 
 # Import the partitioning function
 # Assuming the function is saved in a file named dirichlet_partition.py
-from dirichlet_partitioner import dirichlet_balanced_partition
+from data.dirichlet_partitioner import dirichlet_balanced_partition
 
 def main():
     # Parse command line arguments
