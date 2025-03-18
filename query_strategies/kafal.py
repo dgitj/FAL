@@ -44,12 +44,14 @@ class KAFALSampler:
                 scores_t, _ = model_server(inputs)
 
                 # Intensify specialized knowledge
-                spc = self.loss_weight_list[c]
+                # spc = self.loss_weight_list[c]
+                spc = self.loss_weight_list[c].to(scores.device)
                 spc = spc.unsqueeze(0).expand(inputs.size(0), -1)
                 
                 const = 1
                 scores += const * spc.log()
                 scores_t += const * spc.log()
+                
 
                 # Compute symmetric KL divergence
                 kl_client_server = F.kl_div(
@@ -69,7 +71,7 @@ class KAFALSampler:
 
         return discrepancy.cpu()
 
-    def select_samples(self, model, model_server, unlabeled_loader, c, unlabeled_set, num_samples):
+    def select_samples(self, model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, seed=None):
         """
         Selects samples with the highest discrepancy scores.
 
