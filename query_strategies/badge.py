@@ -23,48 +23,51 @@ class BADGESampler:
         Returns:
             tuple: (gradient_embeddings, data_indices)
         """
+        from torch.cuda.amp import autocast
+
         model.eval()  # Set model to evaluation mode
         gradients = []
         data_indices = []
 
-        for batch_idx, (inputs, _) in enumerate(unlabeled_loader):
-            inputs = inputs.to(self.device)
-            inputs.requires_grad_(True)
+        with autocast(enabled=True):
+            for batch_idx, (inputs, _) in enumerate(unlabeled_loader):
+                inputs = inputs.to(self.device)
+                inputs.requires_grad_(True)
 
-            # Forward pass with proper output handling
-            model_output = model(inputs)
-            
-            # Extract logits based on model output format
-            if isinstance(model_output, tuple):
-                # Handle case where model returns (logits, features) or (logits, [features])
-                outputs = model_output[0]
-            else:
-                # Handle case where model directly returns logits
-                outputs = model_output
+                # Forward pass with proper output handling
+                model_output = model(inputs)
+                
+                # Extract logits based on model output format
+                if isinstance(model_output, tuple):
+                    # Handle case where model returns (logits, features) or (logits, [features])
+                    outputs = model_output[0]
+                else:
+                    # Handle case where model directly returns logits
+                    outputs = model_output
 
-            # Create virtual labels from predictions (single operation)
-            probs = F.softmax(outputs, dim=1)
-            grad_embedding = torch.zeros_like(probs)
-            virtual_labels = probs.max(1)[1]
-            grad_embedding.scatter_(1, virtual_labels.unsqueeze(1), 1)
-            
-            # Single backward pass for all classes
-            loss = -(grad_embedding * outputs).sum()
-            loss.backward()
-            
-            # Store gradients and indices
-            grad = inputs.grad.view(inputs.size(0), -1)
-            gradients.append(grad.cpu().detach())
-            
-            # Calculate correct indices in the dataset
-            batch_indices = list(range(
-                batch_idx * unlabeled_loader.batch_size,
-                min((batch_idx + 1) * unlabeled_loader.batch_size, len(unlabeled_loader.dataset))
-            ))
-            data_indices.extend(batch_indices)
-            
-            # Clean up gradients
-            inputs.grad = None
+                # Create virtual labels from predictions (single operation)
+                probs = F.softmax(outputs, dim=1)
+                grad_embedding = torch.zeros_like(probs)
+                virtual_labels = probs.max(1)[1]
+                grad_embedding.scatter_(1, virtual_labels.unsqueeze(1), 1)
+                
+                # Single backward pass for all classes
+                loss = -(grad_embedding * outputs).sum()
+                loss.backward()
+                
+                # Store gradients and indices
+                grad = inputs.grad.view(inputs.size(0), -1)
+                gradients.append(grad.cpu().detach())
+                
+                # Calculate correct indices in the dataset
+                batch_indices = list(range(
+                    batch_idx * unlabeled_loader.batch_size,
+                    min((batch_idx + 1) * unlabeled_loader.batch_size, len(unlabeled_loader.dataset))
+                ))
+                data_indices.extend(batch_indices)
+                
+                # Clean up gradients
+                inputs.grad = None
 
         # Ensure we have gradients to return
         if len(gradients) == 0:
