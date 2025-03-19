@@ -44,35 +44,36 @@ from torchvision.datasets import CIFAR10
 from config import *
 from tqdm import tqdm
 
-def debug_dataloader(loader, client_id, tag="train"):
-    """Print checksum and first few samples to verify determinism."""
-    samples = []
-    for i, (inputs, labels) in enumerate(loader):
-        if i >= 3:  # Just check first 3 batches
-            break
-        # Convert to numpy for consistent output
-        batch_samples = [(idx, lab.item()) for idx, lab in 
-                         zip(range(len(labels)), labels)]
-        samples.append(batch_samples)
-        print(f"Client {client_id}, {tag} batch {i}: First 5 samples: {batch_samples[:5]}")
+# import analysis logger
+from analysis.logger_strategy import FederatedALLogger
+# Helper function for class accuracy evaluation
+def evaluate_per_class_accuracy(model, test_loader, device):
+    model.eval()
+    class_correct = np.zeros(10)  # 10 classes for CIFAR10
+    class_total = np.zeros(10)
     
-    # Calculate a checksum of all indices and labels to verify consistency
-    flat_samples = [item for batch in samples for item in batch]
-    checksum = sum([idx * 10 + lab for idx, lab in flat_samples]) % 10000
-    print(f"Client {client_id}, {tag} data checksum: {checksum}")
-    return checksum
+    with torch.no_grad():
+        for inputs, labels in test_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            
+            scores, _ = model(inputs)
+            _, preds = torch.max(scores.data, 1)
+            
+            for i in range(len(labels)):
+                label = labels[i].item()
+                class_correct[label] += (preds[i] == labels[i]).item()
+                class_total[label] += 1
+    
+    # Calculate accuracy for each class
+    class_accuracies = {}
+    for i in range(10):
+        if class_total[i] > 0:
+            class_accuracies[i] = class_correct[i] / class_total[i] * 100
+        else:
+            class_accuracies[i] = 0.0
+    
+    return class_accuracies
 
-def model_checksum(model):
-    """Calculate a simple checksum of model weights for comparison."""
-    state_dict = model.state_dict()
-    checksum = 0
-    for key in sorted(state_dict.keys()):
-        # Get a simple numeric representation of each parameter tensor
-        param_sum = state_dict[key].abs().sum().item()
-        # Add to checksum with a multiplier based on parameter name
-        # This ensures different parameters contribute differently
-        checksum += param_sum * hash(key) % 10000
-    return checksum % 1000000
 
 def set_all_seeds(seed):
     """Set all seeds for reproducibility"""
@@ -319,15 +320,9 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, tr
         server_state_dict = models['server'].state_dict()
 
         # broadcast
-        print("\n==== SEQUENTIAL IMPLEMENTATION - DATALOADER VERIFICATION ====")
         for c in selected_clients_id:
-            print(f"\n=== Debugging DataLoader for Client {c} ===")
-            train_checksum = debug_dataloader(dataloaders['train-private'][c], c, "train")
-            if LOCAL_MODEL_UPDATE != "Vanilla":
-                unlab_checksum = debug_dataloader(dataloaders['unlab-private'][c], c, "unlab")
-            print(f"=======================================\n") 
             models['clients'][c].load_state_dict(server_state_dict, strict=False)
-            print(f"Sequential - Client {c} model checksum before training: {model_checksum(models['clients'][c])}")
+
 
         # local updates
         start = time.time()
@@ -344,7 +339,6 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, tr
         end = time.time()
         print('time epoch:',(end-start)/num_epochs)
 
-        print(f"Sequential - Server model checksum before aggregation: {model_checksum(models['server'])}")
 
         # aggregation
         local_states = [
@@ -363,7 +357,6 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, tr
             # model_state[key] /= np.sum(selected_data_num)
             model_state[key] = model_state[key].float() / np.sum(selected_data_num)
         models['server'].load_state_dict(model_state, strict=False)
-        print(f"Sequential - Server model checksum after aggregation: {model_checksum(models['server'])}")
 
     print('>> Finished.')
 
@@ -387,6 +380,14 @@ if __name__ == '__main__':
     print(f"Generating Dirichlet partition with alpha {ALPHA}, seed {SEED} for {CLIENTS} clients...")
 
     data_splits = dirichlet_balanced_partition(cifar10_train, CLIENTS, alpha=ALPHA, seed=SEED)
+    
+    # Initialize analysis logger
+
+    logger = FederatedALLogger(
+    strategy_name=ACTIVE_LEARNING_STRATEGY,
+    num_clients=CLIENTS,
+    num_classes=10  # CIFAR10
+    )
 
     for trial in range(TRIALS):
         trial_seed = SEED + TRIAL_SEED_OFFSET * (trial + 1)
@@ -427,8 +428,6 @@ if __name__ == '__main__':
 
         # prepare initial data pools
         for c in range(CLIENTS):
-            partition_checksum = sum(data_splits[c]) % 10000
-            print(f"Client {c} initial partition checksum: {partition_checksum}")
             client_worker_init_fn = get_seed_worker(trial_seed + c * 100)
 
             # For labeled data loaders
@@ -451,8 +450,7 @@ if __name__ == '__main__':
 
             # Apply the shuffled indices
             data_list[c] = [data_splits[c][i] for i in shuffled_indices]
-            shuffled_checksum = sum(data_list[c]) % 10000
-            print(f"Client {c} shuffled partition checksum: {shuffled_checksum}")
+    
 
             # random.shuffle(data_list[c]) # Old code without reproducibility
             # public_set.extend(data_list[c][-base:])
@@ -498,6 +496,10 @@ if __name__ == '__main__':
             client_models.append(copy.deepcopy(resnet8).to(device))
         data_num = np.array(data_num)
 
+        # Initialize logger
+        for c in range(CLIENTS):
+            initial_class_labels = [id2lab[idx] for idx in labeled_set_list[c]]
+            logger.log_sample_classes(0, initial_class_labels, c)  # Cycle 0 = initial data
 
         # added strategy manager
         strategy_manager = StrategyManager(
@@ -567,6 +569,15 @@ if __name__ == '__main__':
             loss_weight_list_2 = []
             server_state_dict = models['server'].state_dict()
 
+            # Analysis logger
+            if cycle == 0:  # Only log at beginning of cycle
+                model_distances = {}
+                for c in range(CLIENTS):
+                    distance = logger.calculate_model_distance(models['clients'][c], models['server'])
+                    model_distances[c] = distance
+                logger.log_model_distances(cycle, model_distances)
+
+
             # Calculate sampling scores and sample for annotations.
             for c in range(CLIENTS): 
 
@@ -600,6 +611,11 @@ if __name__ == '__main__':
 
                 models['clients'][c].load_state_dict(server_state_dict, strict=False)
 
+                # Analysis logger: Log the selected samples and their classes
+                logger.log_selected_samples(cycle + 1, selected_samples, c)
+                selected_classes = [id2lab[idx] for idx in selected_samples]
+                logger.log_sample_classes(cycle + 1, selected_classes, c)
+
                 # Update labeled and unlabeled sets
                 labeled_set_list[c].extend(selected_samples)
                 unlabeled_set_list[c] = remaining_unlabeled
@@ -628,8 +644,13 @@ if __name__ == '__main__':
                                                         pin_memory=True))
             # evaluation
             acc_server = test(models, dataloaders, mode='test')
+            logger.log_global_accuracy(cycle, acc_server)
             print('Trial {}/{} || Cycle {}/{} || Labelled sets size {}: server acc {}'.format(
                 trial + 1, TRIALS, cycle + 1, CYCLES, total_labels, acc_server))
+            
+            # Analysis logger: Log class accuracies
+            class_accuracies = evaluate_per_class_accuracy(models['server'], dataloaders['test'], device)
+            logger.log_class_accuracies(cycle, class_accuracies)
 
             # update distributions
             loss_weight_list = loss_weight_list_2
@@ -637,6 +658,8 @@ if __name__ == '__main__':
             dataloaders['unlab-private'] = private_unlab_loaders
             data_num = np.array(data_num)
             accuracies[trial].append(acc_server)
+
+            logger.save_data()
         print('accuracies for trial {}:'.format(trial), accuracies[trial])
 
     print('accuracies means:',np.array(accuracies).mean(1))
