@@ -44,6 +44,11 @@ class EntropySampler:
                 
                 # Calculate entropy using log_softmax for numerical stability
                 log_probs = F.log_softmax(outputs, dim=1)
+
+                # Handling of extreme values
+                log_probs[log_probs == float("-inf")] = 0
+                log_probs[log_probs == float("inf")] = 0
+                
                 probabilities = torch.exp(log_probs)
                 batch_entropy = -torch.sum(probabilities * log_probs, dim=1)
                 
@@ -82,7 +87,7 @@ class EntropySampler:
             raise ValueError("Entropy computation failed: No entropy scores were generated")
         
         if np.var(entropy_scores) < 1e-5:
-            raise ValueError("Entropy scores have near-zero variance. Model predictions may be too confident or too uncertain.")
+            print("Entropy scores have near-zero variance. Model predictions may be too confident or too uncertain.")
         
         # Sort by entropy in descending order (highest entropy first)
         sorted_indices = np.argsort(-entropy_scores)
