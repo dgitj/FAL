@@ -31,7 +31,7 @@ COMMUNICATION=2
 CYCLES=2
 RATIO=0.8
 CLIENTS=10
-TRIALS=1
+TRIALS=2
 LOCAL_MODEL_UPDATE = "Vanilla" # Options are "Vanilla" and "KFCU"  
 DATATSET = "CIFAR10" # Options are "CIFAR10" and "SVHN"
 

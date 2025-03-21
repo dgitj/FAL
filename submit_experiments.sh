@@ -58,7 +58,6 @@ echo "Experiment took $duration seconds."
 echo "Local results directory content:"
 ls -la results
 
-
 # Copy the analysis_logs folder (which includes your JSON file and other logs) back to persistent storage.
-rsync -av analysis_logs /home/kit/kastel/wu0175/FAL/analysis_logs/results-${SLURM_JOB_ID}/
+rsync -av analysis_logs /home/kit/kastel/wu0175/FAL/analysis_logs/
 # When the job finishes, $TMPDIR will be cleaned automatically.
