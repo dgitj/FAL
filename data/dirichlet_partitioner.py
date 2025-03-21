@@ -2,7 +2,7 @@ import torch
 import random
 import numpy as np
 import math
-from torchvision.datasets import CIFAR10, CIFAR100, SVHN
+from torchvision.datasets import CIFAR10, SVHN
 from config import SEED
 
 def dirichlet_balanced_partition(dataset, num_clients, alpha, seed):
@@ -23,7 +23,7 @@ def dirichlet_balanced_partition(dataset, num_clients, alpha, seed):
       # Debugging: Print dataset type
     print(f"Dataset type: {type(dataset)}")
     print(f"CIFAR10 match: {isinstance(dataset, CIFAR10)}")
-    print(f"CIFAR100 match: {isinstance(dataset, CIFAR100)}")
+    print(f"CIFAR100 match: {isinstance(dataset, SVHN)}")
     
     # Set seeds for reproducibility
     torch.manual_seed(seed)
@@ -35,8 +35,6 @@ def dirichlet_balanced_partition(dataset, num_clients, alpha, seed):
     # Get number of classes from dataset
     if isinstance(dataset, CIFAR10):
         num_classes = 10
-    elif isinstance(dataset, CIFAR100):
-        num_classes = 100
     elif isinstance(dataset, SVHN):
         num_classes = 10
     else:
