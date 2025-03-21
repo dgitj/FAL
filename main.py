@@ -6,6 +6,7 @@ import json
 import time
 import importlib
 import functools
+import argparse
 
 # Torch
 import torch
@@ -39,6 +40,17 @@ import models.preact_resnet as resnet
 # Torchvison
 import torchvision.transforms as T
 from torchvision.datasets import CIFAR10
+
+
+# Allow CLI arguments for active learning strategy
+parser = argparse.ArgumentParser()
+parser.add_argument('--strategy', type=str, help='Active learning strategy to use')
+args = parser.parse_args()
+
+import config
+if args.strategy:
+    config.ACTIVE_LEARNING_STRATEGY = args.strategy
+
 
 # Utils
 from config import *
@@ -74,7 +86,6 @@ def evaluate_per_class_accuracy(model, test_loader, device):
     
     return class_accuracies
 
-
 def set_all_seeds(seed):
     """Set all seeds for reproducibility"""
     random.seed(seed)
@@ -85,6 +96,7 @@ def set_all_seeds(seed):
         torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+
 def seed_worker_fn(base_seed, worker_id):
     """Sets unique seed for each dataloader worker"""
     worker_seed = base_seed + worker_id
@@ -94,7 +106,6 @@ def seed_worker_fn(base_seed, worker_id):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(worker_seed)
 
-# Function to create a partial application (picklable)
 def get_seed_worker(base_seed):
     """Creates a worker initialization function with the given base seed"""
     return functools.partial(seed_worker_fn, base_seed)
@@ -103,7 +114,8 @@ def get_seed_worker(base_seed):
 from data.sampler import SubsetSequentialSampler
 from torch.utils.data.sampler import SubsetRandomSampler
 
-# Load data
+# Load data cifar10
+
 cifar10_train_transform = T.Compose([
     T.RandomHorizontalFlip(),
     T.RandomCrop(size=32, padding=4),
@@ -121,6 +133,26 @@ cifar10_dataset_dir = DATA_ROOT
 cifar10_train = CIFAR10(cifar10_dataset_dir, train=True, download=True, transform=cifar10_train_transform)
 cifar10_test  = CIFAR10(cifar10_dataset_dir, train=False, download=True, transform=cifar10_test_transform)
 cifar10_select = CIFAR10(cifar10_dataset_dir, train=True, download=True, transform=cifar10_test_transform)
+
+# Load data svhn
+
+svhn_train_transform = T.Compose([
+    T.RandomHorizontalFlip(),
+    T.RandomCrop(size=32, padding=4),
+    T.ToTensor(),
+    T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
+])
+
+svhn_test_transform = T.Compose([
+    T.ToTensor(),
+    T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
+])
+
+svhn_dataset_dir = DATA_ROOT
+
+svhn_train = SVHN(cifar10_dataset_dir, train=True, download=True, transform=cifar10_train_transform)
+svhn_test  = SVHN(cifar10_dataset_dir, train=False, download=True, transform=cifar10_test_transform)
+svhn_select = SVHN(cifar10_dataset_dir, train=True, download=True, transform=cifar10_test_transform)
 
 
 
@@ -339,6 +371,11 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, tr
         end = time.time()
         print('time epoch:',(end-start)/num_epochs)
 
+        for c in selected_clients_id:
+            # Log gradient alignment between client and server models
+            logger.log_gradient_alignment(cycle, models['clients'][c], models['server'], 
+                                        dataloaders['train-private'][c], c)
+
 
         # aggregation
         local_states = [
@@ -386,7 +423,7 @@ if __name__ == '__main__':
     logger = FederatedALLogger(
     strategy_name=ACTIVE_LEARNING_STRATEGY,
     num_clients=CLIENTS,
-    num_classes=10  # CIFAR10
+    num_classes=10  # CIFAR10, SVHN
     )
 
     for trial in range(TRIALS):
@@ -647,6 +684,10 @@ if __name__ == '__main__':
             logger.log_global_accuracy(cycle, acc_server)
             print('Trial {}/{} || Cycle {}/{} || Labelled sets size {}: server acc {}'.format(
                 trial + 1, TRIALS, cycle + 1, CYCLES, total_labels, acc_server))
+            
+            for c in range(CLIENTS):
+                logger.log_knowledge_gap(cycle, models['clients'][c], models['server'], 
+                                    dataloaders['test'], c)
             
             # Analysis logger: Log class accuracies
             class_accuracies = evaluate_per_class_accuracy(models['server'], dataloaders['test'], device)
