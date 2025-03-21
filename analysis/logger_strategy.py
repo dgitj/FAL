@@ -1,18 +1,17 @@
 import os
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
 import torch.nn.functional as F
-import seaborn as sns
 import json
 import config
 import copy
 
 class FederatedALLogger:
-    def __init__(self, strategy_name, num_clients, num_classes, log_dir="analysis_logs"):
+    def __init__(self, strategy_name, num_clients, num_classes, trial_id, log_dir="analysis_logs"):
         self.strategy_name = strategy_name
         self.num_clients = num_clients
         self.num_classes = num_classes
+        self.trial_id = trial_id
         self.log_dir = log_dir
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.gradient_alignments = {}
@@ -226,7 +225,7 @@ class FederatedALLogger:
         }
         
         # Save JSON file
-        json_filename = f"{self.strategy_name}_c{self.num_clients}_results.json"
+        json_filename = f"{self.strategy_name}_c{self.num_clients}_trial{self.trial_id}.json"
         json_path = os.path.join(self.log_dir, json_filename)
         with open(json_path, 'w') as f:
             json.dump(data, f, indent=2)

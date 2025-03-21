@@ -134,28 +134,6 @@ cifar10_train = CIFAR10(cifar10_dataset_dir, train=True, download=True, transfor
 cifar10_test  = CIFAR10(cifar10_dataset_dir, train=False, download=True, transform=cifar10_test_transform)
 cifar10_select = CIFAR10(cifar10_dataset_dir, train=True, download=True, transform=cifar10_test_transform)
 
-# Load data svhn
-
-svhn_train_transform = T.Compose([
-    T.RandomHorizontalFlip(),
-    T.RandomCrop(size=32, padding=4),
-    T.ToTensor(),
-    T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
-])
-
-svhn_test_transform = T.Compose([
-    T.ToTensor(),
-    T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
-])
-
-svhn_dataset_dir = DATA_ROOT
-
-svhn_train = SVHN(cifar10_dataset_dir, train=True, download=True, transform=cifar10_train_transform)
-svhn_test  = SVHN(cifar10_dataset_dir, train=False, download=True, transform=cifar10_test_transform)
-svhn_select = SVHN(cifar10_dataset_dir, train=True, download=True, transform=cifar10_test_transform)
-
-
-
 class BSMLoss(nn.Module):
     """
     balanced softmax loss
@@ -194,7 +172,7 @@ def train_epoch_client_distil(selected_clients_id, models, criterion, optimizers
     kld = nn.KLDivLoss(reduce=False)
 
     for c in selected_clients_id:
-        client_seed = int(trial_seed + c * 1000 + comm * 10)
+        client_seed = (trial_seed * 100 + c * 10) % (2**31 - 1)
         # Set global PyTorch random state (same as vanilla)
         torch.manual_seed(client_seed)
         if torch.cuda.is_available():
@@ -280,7 +258,7 @@ def train_epoch_client_vanilla(selected_clients_id, models, criterion, optimizer
 
     for c in selected_clients_id:
         # Set deterministic behavior for this client
-        client_seed = trial_seed + c * 1000
+        client_seed = (trial_seed * 100 + c * 10) % (2**31 - 1)
         torch.manual_seed(client_seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed(client_seed)
@@ -340,7 +318,7 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, tr
     for com in range(COMMUNICATION):
         ###
          # Deterministic client selection
-        rng = np.random.RandomState(trial_seed + com * 100)
+        rng = np.random.RandomState(trial_seed * 100 + com * 10)
 
         if com < COMMUNICATION-1:
             selected_clients_id = rng.choice(CLIENTS, int(CLIENTS * RATIO), replace=False)
@@ -375,7 +353,8 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, tr
             # Log gradient alignment between client and server models
             logger.log_gradient_alignment(cycle, models['clients'][c], models['server'], 
                                         dataloaders['train-private'][c], c)
-
+            logger.log_knowledge_gap(cycle, models['clients'][c], models['server'], 
+                                    dataloaders['test'], c)
 
         # aggregation
         local_states = [
@@ -414,23 +393,25 @@ if __name__ == '__main__':
     # with open(f"distribution/alpha0.1_cifar10_{CLIENTS}clients_var0.1_seed42.json") as json_file:
     #    data_splits = json.load(json_file)
 
-    print(f"Generating Dirichlet partition with alpha {ALPHA}, seed {SEED} for {CLIENTS} clients...")
-
-    data_splits = dirichlet_balanced_partition(cifar10_train, CLIENTS, alpha=ALPHA, seed=SEED)
     
-    # Initialize analysis logger
-
-    logger = FederatedALLogger(
-    strategy_name=ACTIVE_LEARNING_STRATEGY,
-    num_clients=CLIENTS,
-    num_classes=10  # CIFAR10, SVHN
-    )
-
+    
     for trial in range(TRIALS):
         trial_seed = SEED + TRIAL_SEED_OFFSET * (trial + 1)
         set_all_seeds(trial_seed)
 
         print(f"\n=== Trial {trial+1}/{TRIALS} (Seed: {trial_seed}) ===\n")
+
+        print(f"Generating Dirichlet partition with alpha {ALPHA}, seed {trial_seed} for {CLIENTS} clients...")
+
+        data_splits = dirichlet_balanced_partition(cifar10_train, CLIENTS, alpha=ALPHA, seed=trial_seed)
+        
+        # Initialize analysis logger
+        logger = FederatedALLogger(
+            strategy_name=ACTIVE_LEARNING_STRATEGY,
+            num_clients=CLIENTS,
+            num_classes=10,  # CIFAR10, SVHN
+            trial_id=trial+1 
+        )
 
         labeled_set_list = []
         unlabeled_set_list = []
@@ -612,8 +593,8 @@ if __name__ == '__main__':
                 for c in range(CLIENTS):
                     distance = logger.calculate_model_distance(models['clients'][c], models['server'])
                     model_distances[c] = distance
-                logger.log_model_distances(cycle, model_distances)
 
+                logger.log_model_distances(cycle, model_distances)
 
             # Calculate sampling scores and sample for annotations.
             for c in range(CLIENTS): 
@@ -684,10 +665,6 @@ if __name__ == '__main__':
             logger.log_global_accuracy(cycle, acc_server)
             print('Trial {}/{} || Cycle {}/{} || Labelled sets size {}: server acc {}'.format(
                 trial + 1, TRIALS, cycle + 1, CYCLES, total_labels, acc_server))
-            
-            for c in range(CLIENTS):
-                logger.log_knowledge_gap(cycle, models['clients'][c], models['server'], 
-                                    dataloaders['test'], c)
             
             # Analysis logger: Log class accuracies
             class_accuracies = evaluate_per_class_accuracy(models['server'], dataloaders['test'], device)
