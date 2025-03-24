@@ -388,12 +388,6 @@ if __name__ == '__main__':
     for id in indices:
         id2lab.append(cifar10_train[id][1])
     id2lab = np.array(id2lab)
-
-
-    # with open(f"distribution/alpha0.1_cifar10_{CLIENTS}clients_var0.1_seed42.json") as json_file:
-    #    data_splits = json.load(json_file)
-
-    
     
     for trial in range(TRIALS):
         trial_seed = SEED + TRIAL_SEED_OFFSET * (trial + 1)
@@ -403,7 +397,10 @@ if __name__ == '__main__':
 
         print(f"Generating Dirichlet partition with alpha {ALPHA}, seed {trial_seed} for {CLIENTS} clients...")
 
-        data_splits = dirichlet_balanced_partition(cifar10_train, CLIENTS, alpha=ALPHA, seed=trial_seed)
+        with open(f"data/extreme_partition.json") as json_file:
+            data_splits = json.load(json_file)
+
+        # data_splits = dirichlet_balanced_partition(cifar10_train, CLIENTS, alpha=ALPHA, seed=trial_seed)
         
         # Initialize analysis logger
         logger = FederatedALLogger(
