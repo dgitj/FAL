@@ -531,7 +531,7 @@ def analyze_knowledge_gaps(experiments):
 
 
 if __name__ == "__main__":
-    result_files = glob.glob("*results.json")
+    result_files = glob.glob("_trial*.json")
     
     if not result_files:
         print("No result files found.")
