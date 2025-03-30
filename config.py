@@ -14,7 +14,7 @@ DATA_ROOT = 'data/cifar-10-batches-py'
 # - "LOGO"
 
 
-ACTIVE_LEARNING_STRATEGY = "KAFAL"
+ACTIVE_LEARNING_STRATEGY = "NEW"
 
 # random seed
 SEED = 42
