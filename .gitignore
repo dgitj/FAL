@@ -3,6 +3,8 @@
 /data/cifar-100-python/
 /data/
 
+/analysis_logs/
+
 # macOS system files
 .DS_Store
 
