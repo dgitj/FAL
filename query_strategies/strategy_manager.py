@@ -5,6 +5,7 @@ from query_strategies.random import RandomSampler
 from query_strategies.noise_stability import NoiseStabilitySampler
 from query_strategies.feal import FEALSampler
 from query_strategies.logo import LoGoSampler
+from query_strategies.NEW import AdaptiveDifficultySampler
 
 from config import ACTIVE_LEARNING_STRATEGY
 
@@ -35,6 +36,9 @@ class StrategyManager:
             if loss_weight_list is None:
                 raise ValueError("KAFAL strategy requires loss_weight_list")
             return KAFALSampler(loss_weight_list, self.device)
+        
+        if strategy_name == "NEW":
+            return AdaptiveDifficultySampler(self.device)
             
         elif strategy_name == "Entropy":
             return EntropySampler(self.device)
@@ -87,6 +91,9 @@ class StrategyManager:
             raise ValueError("Strategy not set. Use set_strategy() to set the strategy.")
             
         # Handle different parameter requirements for each strategy
+        if self.strategy_name == "NEW":
+            # KAFAL needs client ID for its specialized knowledge component
+            return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, seed=seed) 
         if self.strategy_name == "KAFAL":
             # KAFAL needs client ID for its specialized knowledge component
             return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, seed=seed) 
