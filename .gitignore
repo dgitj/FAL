@@ -1,6 +1,7 @@
 # Ignore datasets
 /data/cifar-10-batches-py/
 /data/cifar-100-python/
+/data/
 
 # macOS system files
 .DS_Store
