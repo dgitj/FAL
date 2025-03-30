@@ -8,6 +8,7 @@ from .noise_stability import NoiseStabilitySampler
 from .feal import FEALSampler
 from .logo import LoGoSampler
 from .strategy_manager import StrategyManager
+from .NEW import AdaptiveDifficultySampler
 
 # Define __all__ for explicit exports
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "NoiseStabilitySampler",
     "FEALSampler",
     "LoGoSampler",
+    "AdaptiveDifficultySampler"
 ]
