@@ -8,6 +8,7 @@ import random
 import argparse
 import json
 import numpy as np
+import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -152,6 +153,7 @@ def main():
         print('Number of communication rounds:', COMMUNICATION)
         
         # Prepare client data
+        resnet8 = resnet.preact_resnet8_cifar(num_classes=num_classes)
         client_models = []
         data_list = []
         total_data_num = [len(data_splits[c]) for c in range(CLIENTS)]
@@ -227,7 +229,8 @@ def main():
             ))
             
             # Initialize client models
-            client_models.append(resnet.preact_resnet8_cifar(num_classes=num_classes).to(device))
+            #client_models.append(resnet.preact_resnet8_cifar(num_classes=num_classes).to(device))
+            client_models.append(copy.deepcopy(resnet8).to(device))
         
         data_num = np.array(data_num)
         
@@ -242,6 +245,9 @@ def main():
             loss_weight_list=loss_weight_list,
             device=device
         )
+        # If using GlobalOptimal strategy, set the total number of clients
+        if ACTIVE_LEARNING_STRATEGY == "GlobalOptimal":
+            strategy_manager.set_total_clients(CLIENTS)
         
         # Create test loader
         test_loader = create_test_loader(cifar10_test, trial_seed)
@@ -398,6 +404,14 @@ def main():
             print('Trial {}/{} || Cycle {}/{} || Labelled sets size {}: server acc {:.2f}%'.format(
                 trial + 1, TRIALS, cycle + 1, CYCLES, total_labels, acc_server))
             
+            # Log the accumulated labeled samples for each client
+            print("\n===== Accumulated Labeled Samples =====")
+            for c in range(CLIENTS):
+                print(f"Client {c}: {len(labeled_set_list[c])} samples")
+            print(f"Total labeled samples: {sum(len(labeled_set_list[c]) for c in range(CLIENTS))}")
+            print("=======================================\n")
+            
+            
             # Log per-class accuracies
             class_accuracies = evaluate_per_class_accuracy(models['server'], dataloaders['test'], device)
             logger.log_class_accuracies(cycle, class_accuracies)
@@ -417,6 +431,31 @@ def main():
             logger.save_data()
         
         print('Accuracies for trial {}:'.format(trial), accuracies[trial])
+
+        # Add this at the end of each trial (around line 380-390)
+        if ACTIVE_LEARNING_STRATEGY == "GlobalOptimal":
+            print("\n========== GLOBAL OPTIMAL STRATEGY SUMMARY ==========")
+            print(f"Trial {trial+1}/{TRIALS}")
+            
+            # Calculate standard deviation and coefficient of variation of dataset sizes
+            final_sizes = np.array([len(labeled_set_list[c]) for c in range(CLIENTS)])
+            mean_size = np.mean(final_sizes)
+            std_size = np.std(final_sizes)
+            cv = std_size / mean_size * 100  # Coefficient of variation as percentage
+            
+            print(f"Mean labeled samples per client: {mean_size:.2f}")
+            print(f"Standard deviation: {std_size:.2f}")
+            print(f"Coefficient of variation: {cv:.2f}%")
+            
+            # Show min and max
+            min_idx = np.argmin(final_sizes)
+            max_idx = np.argmax(final_sizes)
+            print(f"Client with min samples: Client {min_idx} ({final_sizes[min_idx]} samples)")
+            print(f"Client with max samples: Client {max_idx} ({final_sizes[max_idx]} samples)")
+            print(f"Imbalance ratio (max/min): {final_sizes[max_idx]/final_sizes[min_idx]:.2f}x")
+            
+            print("=======================================================\n")
+        
     
     # Print overall results
     print('Accuracies means:', np.array(accuracies).mean(1))
