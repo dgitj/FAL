@@ -91,16 +91,16 @@ class FederatedTrainer:
             print(f'Average time per epoch: {(end_time-start_time)/num_epochs:.2f} seconds')
 
             # Log metrics if logger is available
-            if self.logger:
-                for c in selected_clients_id:
-                    self.logger.log_gradient_alignment(
-                        0, models['clients'][c], models['server'], 
-                        dataloaders['train-private'][c], c
-                    )
-                    self.logger.log_knowledge_gap(
-                        0, models['clients'][c], models['server'], 
-                        dataloaders['test'], c
-                    )
+           # if self.logger:
+            #    for c in selected_clients_id:
+             #       self.logger.log_gradient_alignment(
+              #          0, models['clients'][c], models['server'], 
+               #         dataloaders['train-private'][c], c
+                #    )
+                 #   self.logger.log_knowledge_gap(
+                  #      0, models['clients'][c], models['server'], 
+                   #     dataloaders['test'], c
+                    #)
 
             # Aggregate client models to update the server model
             self._aggregate_models(models, selected_clients_id, self.data_num)
