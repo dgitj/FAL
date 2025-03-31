@@ -5,7 +5,7 @@ from query_strategies.random import RandomSampler
 from query_strategies.noise_stability import NoiseStabilitySampler
 from query_strategies.feal import FEALSampler
 from query_strategies.logo import LoGoSampler
-from query_strategies.NEW import AdaptiveDifficultySampler
+from query_strategies.entropy_global_optimal import GlobalOptimalEntropyStrategy
 
 from config import ACTIVE_LEARNING_STRATEGY
 
@@ -15,6 +15,12 @@ class StrategyManager:
         self.strategy_name = strategy_name
         self.loss_weight_list = loss_weight_list
         self.sampler = self._initialize_strategy(strategy_name, loss_weight_list)
+        self.clients_processed = 0
+        self.total_clients = 0
+    
+    def set_total_clients(self, num_clients):
+        """Set the total number of clients for global optimization strategies."""
+        self.total_clients = num_clients
     
     def _initialize_strategy(self, strategy_name, loss_weight_list):
         """
@@ -37,8 +43,8 @@ class StrategyManager:
                 raise ValueError("KAFAL strategy requires loss_weight_list")
             return KAFALSampler(loss_weight_list, self.device)
         
-        if strategy_name == "NEW":
-            return AdaptiveDifficultySampler(self.device)
+        elif strategy_name == "GlobalOptimal":
+            return GlobalOptimalEntropyStrategy(self.device)
             
         elif strategy_name == "Entropy":
             return EntropySampler(self.device)
@@ -91,9 +97,6 @@ class StrategyManager:
             raise ValueError("Strategy not set. Use set_strategy() to set the strategy.")
             
         # Handle different parameter requirements for each strategy
-        if self.strategy_name == "NEW":
-            # KAFAL needs client ID for its specialized knowledge component
-            return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, seed=seed) 
         if self.strategy_name == "KAFAL":
             # KAFAL needs client ID for its specialized knowledge component
             return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, seed=seed) 
@@ -113,5 +116,24 @@ class StrategyManager:
             return self.sampler.select_samples(model, unlabeled_loader, unlabeled_set, num_samples, seed=seed)
         elif self.strategy_name == "LOGO":
             return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, seed=seed)
+        elif self.strategy_name == "GlobalOptimal":
+        # Track client processing
+            self.clients_processed += 1   
+            # Calculate entropy scores for this client
+            self.sampler.compute_entropy(model_server, unlabeled_loader, c, unlabeled_set)
+            
+            # If this is the last client to be processed, allocate budget globally
+            if self.clients_processed >= self.total_clients:
+                # Reset counter for next round
+                self.clients_processed = 0
+                
+                # Allocate budget across all clients
+                client_ids = list(range(self.total_clients))
+                total_budget = num_samples * self.total_clients  # Total budget across all clients
+                self.sampler.allocate_global_budget(client_ids, total_budget)
+            
+            # Select samples based on global allocation
+            return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, seed)
+            
         else:
             raise ValueError(f"Unknown strategy: {self.strategy_name}")
