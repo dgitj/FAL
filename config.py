@@ -12,9 +12,10 @@ DATA_ROOT = 'data/cifar-10-batches-py'
 # - "Noise"
 # - "FEAL"
 # - "LOGO"
+# - "GlobalOptimal"
 
 
-ACTIVE_LEARNING_STRATEGY = "NEW"
+ACTIVE_LEARNING_STRATEGY = "GlobalOptimal"
 
 # random seed
 SEED = 42
