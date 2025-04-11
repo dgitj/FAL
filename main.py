@@ -245,10 +245,13 @@ def main():
             loss_weight_list=loss_weight_list,
             device=device
         )
-        # If using GlobalOptimal strategy, set the total number of clients
-        if ACTIVE_LEARNING_STRATEGY == "GlobalOptimal":
+        # If using strategies that need labeled set list or total clients
+        if ACTIVE_LEARNING_STRATEGY == "GlobalOptimal" or ACTIVE_LEARNING_STRATEGY == "CoreSetGlobalOptimal":
             strategy_manager.set_total_clients(CLIENTS)
-        
+            strategy_manager.set_labeled_set_list(labeled_set_list)
+        elif ACTIVE_LEARNING_STRATEGY == "CoreSet":
+            strategy_manager.set_labeled_set_list(labeled_set_list)
+
         # Create test loader
         test_loader = create_test_loader(cifar10_test, trial_seed)
         
@@ -355,8 +358,8 @@ def main():
                     seed=trial_seed + c * 100 + cycle * 1000
                 )
                 
-                # Load server model to client for next round
-                models['clients'][c].load_state_dict(server_state_dict, strict=False)
+             
+                # models['clients'][c].load_state_dict(server_state_dict, strict=False)
                 
                 # Log selected samples and their classes
                 logger.log_selected_samples(cycle + 1, selected_samples, c)

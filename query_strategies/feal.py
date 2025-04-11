@@ -63,6 +63,7 @@ class FEALSampler:
 
                 # Global model uncertainty - Handle tuple return format (scores, features)
                 g_output = global_model(inputs)
+
                 if isinstance(g_output, tuple):
                     g_logit, g_features = g_output
                     # Handle if features is a list of block outputs
