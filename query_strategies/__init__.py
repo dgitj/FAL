@@ -8,8 +8,9 @@ from .noise_stability import NoiseStabilitySampler
 from .feal import FEALSampler
 from .logo import LoGoSampler
 from .strategy_manager import StrategyManager
-from .entropy_global_optimal import GlobalOptimalEntropyStrategy
-
+from .entropy_global_optimal import ClassBalancedEntropySampler
+from .coreset import CoreSetSampler
+from .coreset_global_optimal import ClassBalancedCoreSetSampler 
 # Define __all__ for explicit exports
 __all__ = [
     "BADGESampler",
@@ -20,5 +21,7 @@ __all__ = [
     "NoiseStabilitySampler",
     "FEALSampler",
     "LoGoSampler",
-    "GlobalOptimalEntropyStrategy",
+    "ClassBalancedEntropySampler",
+    "CoreSetSampler",
+    "ClassBalancedCoreSetSampler",
 ]
