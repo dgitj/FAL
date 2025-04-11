@@ -86,6 +86,26 @@ class KAFALSampler:
         Returns:
             tuple: Selected samples and remaining unlabeled samples.
         """
+
+        # Check model divergence
+        model_diff = 0
+        param_count = 0
+        
+        # Calculate absolute difference between model parameters
+        for (name1, param1), (name2, param2) in zip(model.named_parameters(), model_server.named_parameters()):
+            if name1 == name2:  # Sanity check
+                diff = torch.sum(torch.abs(param1 - param2)).item()
+                model_diff += diff
+                param_count += param1.numel()
+    
+        # Calculate average absolute difference per parameter
+        avg_param_diff = model_diff / param_count
+        
+        print(f"\n[KAFAL] Client {c} - Model Divergence Test:")
+        print(f"[KAFAL] Total absolute parameter difference: {model_diff:.4f}")
+        print(f"[KAFAL] Average absolute difference per parameter: {avg_param_diff:.8f}")
+        print(f"[KAFAL] Models are {'IDENTICAL' if avg_param_diff < 1e-6 else 'DIVERGENT'}")
+        
         discrepancy = self.compute_discrepancy(model, model_server, unlabeled_loader, c)
         arg = np.argsort(discrepancy)
 

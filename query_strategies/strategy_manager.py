@@ -5,7 +5,9 @@ from query_strategies.random import RandomSampler
 from query_strategies.noise_stability import NoiseStabilitySampler
 from query_strategies.feal import FEALSampler
 from query_strategies.logo import LoGoSampler
-from query_strategies.entropy_global_optimal import GlobalOptimalEntropyStrategy
+from query_strategies.entropy_global_optimal import ClassBalancedEntropySampler
+from query_strategies.coreset import CoreSetSampler
+from query_strategies.coreset_global_optimal import ClassBalancedCoreSetSampler
 
 from config import ACTIVE_LEARNING_STRATEGY
 
@@ -17,10 +19,15 @@ class StrategyManager:
         self.sampler = self._initialize_strategy(strategy_name, loss_weight_list)
         self.clients_processed = 0
         self.total_clients = 0
+        self.labeled_set_list = None
     
     def set_total_clients(self, num_clients):
         """Set the total number of clients for global optimization strategies."""
         self.total_clients = num_clients
+    
+    def set_labeled_set_list(self, labeled_set_list):
+        """Set the labeled set list for the strategies that need it."""
+        self.labeled_set_list = labeled_set_list
     
     def _initialize_strategy(self, strategy_name, loss_weight_list):
         """
@@ -44,8 +51,10 @@ class StrategyManager:
             return KAFALSampler(loss_weight_list, self.device)
         
         elif strategy_name == "GlobalOptimal":
-            return GlobalOptimalEntropyStrategy(self.device)
+            return ClassBalancedEntropySampler(self.device)
             
+        elif strategy_name == "CoreSetGlobalOptimal":
+            return ClassBalancedCoreSetSampler(self.device)
         elif strategy_name == "Entropy":
             return EntropySampler(self.device)
             
@@ -72,6 +81,9 @@ class StrategyManager:
             )
         elif strategy_name == "LOGO":
             return LoGoSampler(self.device)
+            
+        elif strategy_name == "CoreSet":
+            return CoreSetSampler(self.device)
 
         else:
             raise ValueError(f"Invalid strategy name: {strategy_name}")
@@ -116,12 +128,14 @@ class StrategyManager:
             return self.sampler.select_samples(model, unlabeled_loader, unlabeled_set, num_samples, seed=seed)
         elif self.strategy_name == "LOGO":
             return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, seed=seed)
-        elif self.strategy_name == "GlobalOptimal":
-        # Track client processing
-            self.clients_processed += 1   
-            # Calculate entropy scores for this client
-            self.sampler.compute_entropy(model_server, unlabeled_loader, c, unlabeled_set)
-            
+        elif self.strategy_name == "CoreSet":
+            # CoreSet can benefit from knowing which samples are already labeled
+            labeled_set = self.labeled_set_list[c] if hasattr(self, 'labeled_set_list') else None
+            return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, labeled_set=labeled_set, seed=seed)
+        elif self.strategy_name in ["GlobalOptimal", "CoreSetGlobalOptimal"]:
+            # Both global optimal strategies need both models, client ID, and access to true labels
+            labeled_set = self.labeled_set_list[c] if hasattr(self, 'labeled_set_list') else None
+            return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, labeled_set=labeled_set, seed=seed)
             # If this is the last client to be processed, allocate budget globally
             if self.clients_processed >= self.total_clients:
                 # Reset counter for next round
