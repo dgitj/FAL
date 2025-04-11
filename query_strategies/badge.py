@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from sklearn.cluster import KMeans
 import numpy as np
+from torch.cuda.amp import autocast
 
 class BADGESampler:
     def __init__(self, device="cuda"):
@@ -23,7 +24,7 @@ class BADGESampler:
         Returns:
             tuple: (gradient_embeddings, data_indices)
         """
-        from torch.cuda.amp import autocast
+        
 
         model.eval()  # Set model to evaluation mode
         gradients = []
@@ -32,7 +33,7 @@ class BADGESampler:
         with autocast(enabled=True):
             for batch_idx, (inputs, _) in enumerate(unlabeled_loader):
                 inputs = inputs.to(self.device)
-                inputs.requires_grad_(True)
+                inputs.requires_grad_(True) # track all operations on these inputs
 
                 # Forward pass with proper output handling
                 model_output = model(inputs)
@@ -48,7 +49,7 @@ class BADGESampler:
                 # Create virtual labels from predictions (single operation)
                 probs = F.softmax(outputs, dim=1)
                 grad_embedding = torch.zeros_like(probs)
-                virtual_labels = probs.max(1)[1]
+                virtual_labels = probs.max(1)[1] # For each sample find the index of the class with the highest probability
                 grad_embedding.scatter_(1, virtual_labels.unsqueeze(1), 1)
                 
                 # Single backward pass for all classes
@@ -126,7 +127,7 @@ class BADGESampler:
                     selected_indices.append(closest_idx)
                 else:
                     # Find the next closest point
-                    distances[closest_idx] = np.inf
+                    distances[closest_idx] = np.inf # avoid selecting the same sample for several clusters
                     next_closest = np.argmin(distances)
                     selected_indices.append(next_closest)
             

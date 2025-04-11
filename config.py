@@ -13,12 +13,13 @@ DATA_ROOT = 'data/cifar-10-batches-py'
 # - "FEAL"
 # - "LOGO"
 # - "GlobalOptimal"
+# - "CoreSet"
+# - "CoreSetGlobalOptimal"
 
-
-ACTIVE_LEARNING_STRATEGY = "GlobalOptimal"
+ACTIVE_LEARNING_STRATEGY = "KAFAL"
 
 # random seed
-SEED = 42
+SEED = 44
 TRIAL_SEED_OFFSET = 2000000
 
 # dirichlet partition non-iid level
@@ -32,7 +33,7 @@ COMMUNICATION=2
 CYCLES=2
 RATIO=0.8
 CLIENTS=10
-TRIALS=2
+TRIALS=1
 LOCAL_MODEL_UPDATE = "Vanilla" # Options are "Vanilla" and "KFCU"  
 DATATSET = "CIFAR10" # Options are "CIFAR10" and "SVHN"
 
