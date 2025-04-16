@@ -8,18 +8,24 @@ from query_strategies.logo import LoGoSampler
 from query_strategies.entropy_global_optimal import ClassBalancedEntropySampler
 from query_strategies.coreset import CoreSetSampler
 from query_strategies.coreset_global_optimal import ClassBalancedCoreSetSampler
+from query_strategies.ssl_entropy import SSLEntropySampler
 
 from config import ACTIVE_LEARNING_STRATEGY
 
 class StrategyManager:
-    def __init__(self, strategy_name, loss_weight_list=None, device="cuda"):
+    # [ADDED] Added global_autoencoder parameter to support the SSL step
+    def __init__(self, strategy_name, loss_weight_list=None, device="cuda", global_autoencoder=None):
         self.device = device
         self.strategy_name = strategy_name
         self.loss_weight_list = loss_weight_list
-        self.sampler = self._initialize_strategy(strategy_name, loss_weight_list)
         self.clients_processed = 0
         self.total_clients = 0
         self.labeled_set_list = None
+        # [ADDED] Store the global autoencoder for use in strategies
+        self.global_autoencoder = global_autoencoder
+        
+        # Initialize the sampling strategy
+        self.sampler = self._initialize_strategy(strategy_name, loss_weight_list)
     
     def set_total_clients(self, num_clients):
         """Set the total number of clients for global optimization strategies."""
@@ -84,6 +90,10 @@ class StrategyManager:
             
         elif strategy_name == "CoreSet":
             return CoreSetSampler(self.device)
+            
+        elif strategy_name == "SSLEntropy":
+            # [ADDED] Pass the global autoencoder to the SSLEntropySampler
+            return SSLEntropySampler(self.device, global_autoencoder=self.global_autoencoder)
 
         else:
             raise ValueError(f"Invalid strategy name: {strategy_name}")
@@ -130,11 +140,15 @@ class StrategyManager:
             return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, seed=seed)
         elif self.strategy_name == "CoreSet":
             # CoreSet can benefit from knowing which samples are already labeled
-            labeled_set = self.labeled_set_list[c] if hasattr(self, 'labeled_set_list') else None
+            labeled_set = None
+            if self.labeled_set_list is not None and c < len(self.labeled_set_list):
+                labeled_set = self.labeled_set_list[c]
             return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, labeled_set=labeled_set, seed=seed)
-        elif self.strategy_name in ["GlobalOptimal", "CoreSetGlobalOptimal"]:
-            # Both global optimal strategies need both models, client ID, and access to true labels
-            labeled_set = self.labeled_set_list[c] if hasattr(self, 'labeled_set_list') else None
+        elif self.strategy_name in ["GlobalOptimal", "CoreSetGlobalOptimal", "SSLEntropy"]:
+            # These strategies need both models, client ID, and access to true labels
+            labeled_set = None
+            if self.labeled_set_list is not None and c < len(self.labeled_set_list):
+                labeled_set = self.labeled_set_list[c]
             return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, labeled_set=labeled_set, seed=seed)
             # If this is the last client to be processed, allocate budget globally
             if self.clients_processed >= self.total_clients:
