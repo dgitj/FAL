@@ -15,8 +15,9 @@ DATA_ROOT = 'data/cifar-10-batches-py'
 # - "GlobalOptimal"
 # - "CoreSet"
 # - "CoreSetGlobalOptimal"
+# - "SSLEntropy"
 
-ACTIVE_LEARNING_STRATEGY = "KAFAL"
+ACTIVE_LEARNING_STRATEGY = "SSLEntropy"
 
 # random seed
 SEED = 44
@@ -36,6 +37,19 @@ CLIENTS=10
 TRIALS=1
 LOCAL_MODEL_UPDATE = "Vanilla" # Options are "Vanilla" and "KFCU"  
 DATATSET = "CIFAR10" # Options are "CIFAR10" and "SVHN"
+
+# SSL settings
+# These parameters control the federated SSL autoencoder step
+USE_GLOBAL_SSL = True           # Whether to use SSL autoencoder
+SSL_FEDERATED = True           # Whether to train the autoencoder in a federated manner
+SSL_USE_CONTRASTIVE = True     # ADDED: Whether to use contrastive learning for SSL
+SSL_TEMPERATURE = 0.5          # ADDED: Temperature parameter for contrastive loss
+SSL_PROXIMAL_MU = 0.01         # ADDED: Proximal term weight for FedProx-like regularization
+SSL_LOCAL_EPOCHS = 1           # Number of epochs for local training on each client
+SSL_FEDERATED_ROUNDS = 3       # Number of federated rounds for autoencoder training
+SSL_BATCH_SIZE = 128           # Batch size for SSL training
+SSL_LATENT_DIM = 128           # Dimension of the latent space in the autoencoder
+SSL_LEARNING_RATE = 1e-3       # Learning rate for SSL training
 
 
 # training
