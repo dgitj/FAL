@@ -1,7 +1,3 @@
-"""
-Modified SSLEntropy strategy to use features from the global autoencoder.
-"""
-
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -11,19 +7,21 @@ from torchvision.datasets import CIFAR10
 import torchvision.transforms as T
 from models.ssl.contrastive_model import SimpleContrastiveLearning
 
-# Import config to access global SSL settings
+# [ADDED] Import config to access global SSL settings
 from config import USE_GLOBAL_SSL
 
 class SSLEntropySampler:
+    # [ADDED] Added global_autoencoder parameter to support features from the autoencoder
     def __init__(self, device="cuda", global_autoencoder=None):
         self.device = device if torch.cuda.is_available() and device == "cuda" else "cpu"
         self.debug = True
-        # Store the global autoencoder for feature extraction
+        # [ADDED] Store the global autoencoder for feature extraction
         self.global_autoencoder = global_autoencoder
+        self.device = next(self.global_autoencoder.parameters()).device
         
         # Initialize KMeans first, then load model and distribution
         self.kmeans = None
-        self.ssl_model, self.global_class_distribution = self._load_ssl_model_and_distribution()
+        _, self.global_class_distribution = self._load_ssl_model_and_distribution()
 
         print("[SSLEntropy] Initialized with global distribution:")
         for i in range(10):
@@ -35,16 +33,15 @@ class SSLEntropySampler:
         self.client_labeled_sets = {}
 
     def _load_ssl_model_and_distribution(self):
-        checkpoint_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'distribution', 'round_99.pt')
-        if not os.path.exists(checkpoint_path):
-            raise FileNotFoundError(f"SSL model checkpoint not found at {checkpoint_path}")
+        if self.global_autoencoder is None:
+            raise ValueError("[SSLEntropy] Error: global_autoencoder must be provided!")
 
-        feature_dim = 128
-        ssl_model = SimpleContrastiveLearning(feature_dim=feature_dim).to(self.device)
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
-        ssl_model.load_state_dict(checkpoint['model_state_dict'])
-        ssl_model.eval()
+        print("[SSLEntropy] Estimating global class distribution using provided global autoencoder")
 
+        # Put model in eval mode
+        self.global_autoencoder.eval()
+
+        # Prepare data
         test_transform = T.Compose([
             T.ToTensor(),
             T.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
@@ -64,35 +61,25 @@ class SSLEntropySampler:
             batch_inputs = torch.stack(batch_data).to(self.device)
 
             with torch.no_grad():
-                # Use global autoencoder if available, otherwise use SSL model
-                if self.global_autoencoder is not None and USE_GLOBAL_SSL:
-                    batch_features = self.global_autoencoder.encode(batch_inputs)
-                    if self.debug and i == 0:
-                        print(f"[SSLEntropy] Using global autoencoder features for distribution (dim={batch_features.size(1)})")
-                else:
-                    batch_features = ssl_model.get_features(batch_inputs)
-                features_list.append(batch_features.cpu().numpy())
+                batch_features = self.global_autoencoder.encode(batch_inputs)
+            features_list.append(batch_features.cpu().numpy())
 
         features = np.vstack(features_list)
-        
-        # Explicitly initialize KMeans and fit it
-        print("[SSLEntropy] Initializing KMeans clustering model")
-        kmeans = KMeans(n_clusters=10, random_state=0, n_init="auto")  
-        cluster_assignments = kmeans.fit_predict(features)
-        self.kmeans = kmeans  # Store as instance variable
-        
-        # Ensure the kmeans model is properly initialized
-        if not hasattr(self.kmeans, 'cluster_centers_'):
-            raise RuntimeError("[SSLEntropy] KMeans model failed to initialize properly")
-        
+
+        print("[SSLEntropy] Running KMeans clustering to estimate distribution")
+        self.kmeans = KMeans(n_clusters=10, random_state=0, n_init="auto")
+        cluster_assignments = self.kmeans.fit_predict(features)
+
         counts = np.bincount(cluster_assignments, minlength=10)
         distribution = counts / counts.sum()
         global_distribution = {i: float(distribution[i]) for i in range(10)}
-        
-        print("[SSLEntropy] KMeans model initialized successfully")
-        
-        return ssl_model, global_distribution
-        
+
+        print("[SSLEntropy] Estimated global pseudo-class distribution:")
+        for i in range(10):
+            print(f"  Pseudo-class {i}: {global_distribution[i]:.4f}")
+
+        return self.global_autoencoder, global_distribution
+    
     def compute_target_counts(self, current_distribution, num_samples, labeled_set_size, available_classes):
         """
         Compute the target number of samples to select from each class with advanced balancing.
@@ -317,8 +304,8 @@ class SSLEntropySampler:
         labeled_pseudo_counts = {i: 0 for i in range(10)}
         
         # Extract features and pseudo-labels for all unlabeled samples
-        self.ssl_model.eval()
         model.eval()
+        # [ADDED] Put the autoencoder in eval mode if it exists
         if self.global_autoencoder is not None:
             self.global_autoencoder.eval()
             
@@ -326,19 +313,20 @@ class SSLEntropySampler:
         indices = []
         entropy_scores = []
 
+
         with torch.no_grad():
             for batch_idx, (inputs, _) in enumerate(unlabeled_loader):
                 inputs = inputs.to(self.device)
                 
-                # Use features from the global autoencoder if available, otherwise use SSL model
+                # [ADDED] Use features from the global autoencoder if available, otherwise use SSL model
                 if self.global_autoencoder is not None and USE_GLOBAL_SSL:
                     batch_features = self.global_autoencoder.encode(inputs)
                     if self.debug and batch_idx == 0:
                         print(f"[SSLEntropy] Using global autoencoder features (dim={batch_features.size(1)})")
-                else:
-                    batch_features = self.ssl_model.get_features(inputs)
-                    if self.debug and batch_idx == 0:
-                        print(f"[SSLEntropy] Using SSL model features (dim={batch_features.size(1)})")
+                #else:
+                 #   batch_features = self.ssl_model.get_features(inputs)
+                  #  if self.debug and batch_idx == 0:
+                   #     print(f"[SSLEntropy] Using SSL model features (dim={batch_features.size(1)})")
                         
                 features.append(batch_features.cpu().numpy())
 
@@ -379,16 +367,12 @@ class SSLEntropySampler:
                 num_workers=0
             )
             
-            # Extract features for labeled samples - use same feature extractor as for unlabeled
+            # Extract features for labeled samples
             labeled_features = []
             with torch.no_grad():
                 for inputs, _ in labeled_loader:
                     inputs = inputs.to(self.device)
-                    # Use the same feature extractor as for unlabeled data
-                    if self.global_autoencoder is not None and USE_GLOBAL_SSL:
-                        batch_features = self.global_autoencoder.encode(inputs)
-                    else:
-                        batch_features = self.ssl_model.get_features(inputs)
+                    batch_features = self.global_autoencoder.get_features(inputs)
                     labeled_features.append(batch_features.cpu().numpy())
             
             if labeled_features:
