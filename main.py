@@ -18,8 +18,6 @@ from torch.utils.data.sampler import SubsetRandomSampler
 
 # Import models
 import models.preact_resnet as resnet
-# Import the autoencoder model for the SSL step
-from models.ssl.autoencoder import create_autoencoder
 
 # Import data utilities
 from data.dirichlet_partitioner import dirichlet_balanced_partition
@@ -28,9 +26,6 @@ from data.sampler import SubsetSequentialSampler
 # Import training module components
 from training.trainer import FederatedTrainer
 from training.evaluation import evaluate_model, evaluate_per_class_accuracy
-# Import SSL trainer modules for the autoencoder
-from training.ssl_trainer import train_global_autoencoder
-from training.federated_ssl_trainer import federated_train_autoencoder
 from training.utils import (
     set_all_seeds, get_seed_worker, log_config, get_device, create_results_dir
 )
@@ -114,6 +109,18 @@ def main():
     
     # Create results directory
     results_dir = create_results_dir("results")
+    
+    # Check for SSL_checkpoints directory
+    ssl_checkpoint_dir = os.path.join(os.path.dirname(__file__), 'SSL_checkpoints')
+    if not os.path.exists(ssl_checkpoint_dir):
+        os.makedirs(ssl_checkpoint_dir)
+        print(f"Created directory for SSL checkpoints: {ssl_checkpoint_dir}")
+    
+    # Check for the checkpoint file
+    ssl_checkpoint_path = os.path.join(ssl_checkpoint_dir, 'final_checkpoint.pt')
+    if not os.path.exists(ssl_checkpoint_path) and ACTIVE_LEARNING_STRATEGY == "SSLEntropy":
+        print(f"Warning: SimCLR checkpoint not found at {ssl_checkpoint_path}")
+        print("You need to provide a SimCLR checkpoint for the SSLEntropy strategy")
     
     # Load datasets
     cifar10_train, cifar10_test, cifar10_select = load_datasets()
@@ -234,58 +241,22 @@ def main():
             ))
             
             # Initialize client models
-            #client_models.append(resnet.preact_resnet8_cifar(num_classes=num_classes).to(device))
             client_models.append(copy.deepcopy(resnet8).to(device))
         
         data_num = np.array(data_num)
-        
-        # Fed-SSL step: Train autoencoder in a federated manner after data distribution
-        global_autoencoder = None
-        if USE_GLOBAL_SSL:
-            print("\n===== Starting Federated SSL Autoencoder Training =====\n")
-            # Create autoencoder model
-            global_autoencoder = create_autoencoder(latent_dim=SSL_LATENT_DIM)
-            global_autoencoder = global_autoencoder.to(device)
-
-            
-            # Train the autoencoder in a federated manner using client data
-            global_autoencoder = federated_train_autoencoder(
-                init_model=global_autoencoder,
-                client_train_loaders=private_train_loaders,
-                device=device,
-                local_epochs=SSL_LOCAL_EPOCHS,
-                rounds=SSL_FEDERATED_ROUNDS,
-                lr=SSL_LEARNING_RATE,
-                # Pass contrastive learning parameters
-                use_contrastive=SSL_USE_CONTRASTIVE,
-                temperature=SSL_TEMPERATURE,
-                mu=SSL_PROXIMAL_MU
-            )
-            
-            # Keep the autoencoder in eval mode for feature extraction
-            global_autoencoder.eval()
-            print("\n===== SSL Autoencoder Training Completed =====\n")
         
         # Log initial data distributions
         for c in range(CLIENTS):
             initial_class_labels = [id2lab[idx] for idx in labeled_set_list[c]]
             logger.log_sample_classes(0, initial_class_labels, c)
         
-        # Initialize strategy manager, passing the global autoencoder if available
-        # [ADDED] Conditionally pass the global autoencoder to the strategy manager
-        if USE_GLOBAL_SSL:
-            strategy_manager = StrategyManager(
-                strategy_name=ACTIVE_LEARNING_STRATEGY,
-                loss_weight_list=loss_weight_list,
-                device=device,
-                global_autoencoder=global_autoencoder
-            )
-        else:
-            strategy_manager = StrategyManager(
-                strategy_name=ACTIVE_LEARNING_STRATEGY,
-                loss_weight_list=loss_weight_list,
-                device=device
-            )
+        # Initialize strategy manager
+        strategy_manager = StrategyManager(
+            strategy_name=ACTIVE_LEARNING_STRATEGY,
+            loss_weight_list=loss_weight_list,
+            device=device
+        )
+        
         # If using strategies that need labeled set list or total clients
         if ACTIVE_LEARNING_STRATEGY in ["GlobalOptimal", "CoreSetGlobalOptimal", "CoreSet", "SSLEntropy"]:
             strategy_manager.set_total_clients(CLIENTS)
@@ -396,9 +367,6 @@ def main():
                     add[c],
                     seed=trial_seed + c * 100 + cycle * 1000
                 )
-                
-             
-                # models['clients'][c].load_state_dict(server_state_dict, strict=False)
                 
                 # Log selected samples and their classes
                 logger.log_selected_samples(cycle + 1, selected_samples, c)

@@ -13,7 +13,6 @@ from query_strategies.ssl_entropy import SSLEntropySampler
 from config import ACTIVE_LEARNING_STRATEGY
 
 class StrategyManager:
-    # [ADDED] Added global_autoencoder parameter to support the SSL step
     def __init__(self, strategy_name, loss_weight_list=None, device="cuda", global_autoencoder=None):
         self.device = device
         self.strategy_name = strategy_name
@@ -21,8 +20,6 @@ class StrategyManager:
         self.clients_processed = 0
         self.total_clients = 0
         self.labeled_set_list = None
-        # [ADDED] Store the global autoencoder for use in strategies
-        self.global_autoencoder = global_autoencoder
         
         # Initialize the sampling strategy
         self.sampler = self._initialize_strategy(strategy_name, loss_weight_list)
@@ -92,8 +89,9 @@ class StrategyManager:
             return CoreSetSampler(self.device)
             
         elif strategy_name == "SSLEntropy":
-            # [ADDED] Pass the global autoencoder to the SSLEntropySampler
-            return SSLEntropySampler(self.device, global_autoencoder=self.global_autoencoder)
+            # Now we don't need to pass the global_autoencoder, as the SSLEntropySampler will load
+            # the SimCLR model from checkpoint
+            return SSLEntropySampler(self.device)
 
         else:
             raise ValueError(f"Invalid strategy name: {strategy_name}")
