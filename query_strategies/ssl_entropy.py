@@ -11,13 +11,14 @@ from models.ssl.contrastive_model import SimpleContrastiveLearning
 from config import USE_GLOBAL_SSL
 
 class SSLEntropySampler:
-    # [ADDED] Added global_autoencoder parameter to support features from the autoencoder
     def __init__(self, device="cuda", global_autoencoder=None):
         self.device = device if torch.cuda.is_available() and device == "cuda" else "cpu"
         self.debug = True
-        # [ADDED] Store the global autoencoder for feature extraction
-        self.global_autoencoder = global_autoencoder
-        self.device = next(self.global_autoencoder.parameters()).device
+        
+        # Load SimCLR model from checkpoint
+        print("[SSLEntropy] Loading SimCLR model from checkpoint")
+        self.ssl_model = self._load_ssl_model_from_checkpoint()
+        self.device = next(self.ssl_model.parameters()).device
         
         # Initialize KMeans first, then load model and distribution
         self.kmeans = None
@@ -32,14 +33,36 @@ class SSLEntropySampler:
         self.client_cycles = {}
         self.client_labeled_sets = {}
 
+    def _load_ssl_model_from_checkpoint(self):
+        """Load SimCLR model from checkpoint"""
+        # Define checkpoint path
+        checkpoint_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'SSL_checkpoints')
+        checkpoint_path = os.path.join(checkpoint_dir, 'final_checkpoint.pt')
+        
+        if not os.path.exists(checkpoint_path):
+            raise ValueError(f"[SSLEntropy] Error: SSL checkpoint not found at {checkpoint_path}")
+        
+        # Initialize SimCLR model
+        model = SimpleContrastiveLearning(feature_dim=128, temperature=0.5)
+        model = model.to(self.device)
+        
+        # Load checkpoint
+        print(f"[SSLEntropy] Loading checkpoint from {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        print(f"[SSLEntropy] Loaded SimCLR model from round {checkpoint['round']}")
+        
+        # Set model to evaluation mode
+        model.eval()
+        
+        return model
+
     def _load_ssl_model_and_distribution(self):
-        if self.global_autoencoder is None:
-            raise ValueError("[SSLEntropy] Error: global_autoencoder must be provided!")
+        """Estimate global class distribution using the loaded SimCLR model"""
+        if self.ssl_model is None:
+            raise ValueError("[SSLEntropy] Error: SSL model must be loaded first!")
 
-        print("[SSLEntropy] Estimating global class distribution using provided global autoencoder")
-
-        # Put model in eval mode
-        self.global_autoencoder.eval()
+        print("[SSLEntropy] Estimating global class distribution using SimCLR model")
 
         # Prepare data
         test_transform = T.Compose([
@@ -61,7 +84,8 @@ class SSLEntropySampler:
             batch_inputs = torch.stack(batch_data).to(self.device)
 
             with torch.no_grad():
-                batch_features = self.global_autoencoder.encode(batch_inputs)
+                # Use get_features method for SimCLR model instead of encode
+                batch_features = self.ssl_model.get_features(batch_inputs)
             features_list.append(batch_features.cpu().numpy())
 
         features = np.vstack(features_list)
@@ -78,7 +102,7 @@ class SSLEntropySampler:
         for i in range(10):
             print(f"  Pseudo-class {i}: {global_distribution[i]:.4f}")
 
-        return self.global_autoencoder, global_distribution
+        return self.ssl_model, global_distribution
     
     def compute_target_counts(self, current_distribution, num_samples, labeled_set_size, available_classes):
         """
@@ -305,28 +329,21 @@ class SSLEntropySampler:
         
         # Extract features and pseudo-labels for all unlabeled samples
         model.eval()
-        # [ADDED] Put the autoencoder in eval mode if it exists
-        if self.global_autoencoder is not None:
-            self.global_autoencoder.eval()
+        # Put the SimCLR model in eval mode
+        self.ssl_model.eval()
             
         features = []
         indices = []
         entropy_scores = []
 
-
         with torch.no_grad():
             for batch_idx, (inputs, _) in enumerate(unlabeled_loader):
                 inputs = inputs.to(self.device)
                 
-                # [ADDED] Use features from the global autoencoder if available, otherwise use SSL model
-                if self.global_autoencoder is not None and USE_GLOBAL_SSL:
-                    batch_features = self.global_autoencoder.encode(inputs)
-                    if self.debug and batch_idx == 0:
-                        print(f"[SSLEntropy] Using global autoencoder features (dim={batch_features.size(1)})")
-                #else:
-                 #   batch_features = self.ssl_model.get_features(inputs)
-                  #  if self.debug and batch_idx == 0:
-                   #     print(f"[SSLEntropy] Using SSL model features (dim={batch_features.size(1)})")
+                # Use features from the SimCLR model
+                batch_features = self.ssl_model.get_features(inputs)
+                if self.debug and batch_idx == 0:
+                    print(f"[SSLEntropy] Using SimCLR model features (dim={batch_features.size(1)})")
                         
                 features.append(batch_features.cpu().numpy())
 
@@ -372,7 +389,8 @@ class SSLEntropySampler:
             with torch.no_grad():
                 for inputs, _ in labeled_loader:
                     inputs = inputs.to(self.device)
-                    batch_features = self.global_autoencoder.get_features(inputs)
+                    # Use get_features method for SimCLR model
+                    batch_features = self.ssl_model.get_features(inputs)
                     labeled_features.append(batch_features.cpu().numpy())
             
             if labeled_features:
