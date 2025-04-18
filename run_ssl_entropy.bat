@@ -1,17 +1,17 @@
 @echo off
-echo Running FAL experiment with SSL-based Entropy Strategy
+echo Running FAL experiment with SimCLR-based SSL Entropy Strategy
 
-:: Create distribution directory if it doesn't exist
-if not exist "distribution" mkdir distribution
+:: Create SSL_checkpoints directory if it doesn't exist
+if not exist "SSL_checkpoints" mkdir SSL_checkpoints
 
-:: Check if checkpoint file already exists in distribution directory
-if not exist "distribution\round_99.pt" (
-    echo SSL model checkpoint not found in distribution directory.
-    echo Please place your SSL model checkpoint as distribution/round_99.pt
+:: Check if SimCLR checkpoint file already exists
+if not exist "SSL_checkpoints\final_checkpoint.pt" (
+    echo SimCLR model checkpoint not found in SSL_checkpoints directory.
+    echo Please place your SimCLR model checkpoint as SSL_checkpoints/final_checkpoint.pt
     exit /b 1
 )
 
 :: Run the FAL experiment with SSL-Entropy strategy
-python main.py
+python main.py --strategy SSLEntropy
 
 echo Experiment completed.
