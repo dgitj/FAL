@@ -2,10 +2,13 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import os
-from sklearn.cluster import KMeans
+from sklearn.metrics.pairwise import cosine_similarity
 from torchvision.datasets import CIFAR10
 import torchvision.transforms as T
 from models.ssl.contrastive_model import SimpleContrastiveLearning
+from torch.utils.data import DataLoader
+from data.sampler import SubsetSequentialSampler
+from sklearn.cluster import KMeans
 
 # [ADDED] Import config to access global SSL settings
 from config import USE_GLOBAL_SSL
@@ -18,16 +21,12 @@ class SSLEntropySampler:
         # Load SimCLR model from checkpoint
         print("[SSLEntropy] Loading SimCLR model from checkpoint")
         self.ssl_model = self._load_ssl_model_from_checkpoint()
-        self.device = next(self.ssl_model.parameters()).device
         
-        # Initialize KMeans first, then load model and distribution
-        self.kmeans = None
-        _, self.global_class_distribution = self._load_ssl_model_and_distribution()
-
-        print("[SSLEntropy] Initialized with global distribution:")
-        for i in range(10):
-            print(f"  Class {i}: {self.global_class_distribution[i]:.4f}")
+        # Initialize class centroids and distribution
+        self.class_centroids = None
+        self.global_class_distribution = self._estimate_global_distribution()
         print(f"[SSLEntropy] Using device: {self.device}")
+
         
         # For tracking client progress across cycles
         self.client_cycles = {}
@@ -52,61 +51,194 @@ class SSLEntropySampler:
         model.load_state_dict(checkpoint['model_state_dict'])
         print(f"[SSLEntropy] Loaded SimCLR model from round {checkpoint['round']}")
         
-        # Set model to evaluation mode
         model.eval()
         
         return model
 
-    def _load_ssl_model_and_distribution(self):
+    def _estimate_global_distribution(self):
         """Estimate global class distribution using the loaded SimCLR model"""
         if self.ssl_model is None:
             raise ValueError("[SSLEntropy] Error: SSL model must be loaded first!")
-
+        
         print("[SSLEntropy] Estimating global class distribution using SimCLR model")
-
+        
         # Prepare data
         test_transform = T.Compose([
             T.ToTensor(),
             T.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
         ])
-
+        
         dataset_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
         test_dataset = CIFAR10(dataset_dir, train=False, download=True, transform=test_transform)
-
+        
         batch_size = 100
-        num_samples = min(1000, len(test_dataset))
+        num_samples = min(10000, len(test_dataset))  
         indices = torch.randperm(len(test_dataset))[:num_samples]
-
+        
         features_list = []
         for i in range(0, num_samples, batch_size):
             batch_indices = indices[i:min(i+batch_size, num_samples)]
             batch_data = [test_dataset[idx][0] for idx in batch_indices]
             batch_inputs = torch.stack(batch_data).to(self.device)
-
+            
             with torch.no_grad():
-                # Use get_features method for SimCLR model instead of encode
+                # Use get_features method for SimCLR model
                 batch_features = self.ssl_model.get_features(batch_inputs)
+            
             features_list.append(batch_features.cpu().numpy())
-
+        
         features = np.vstack(features_list)
-
-        print("[SSLEntropy] Running KMeans clustering to estimate distribution")
+        
+        print(f"[SSLEntropy] Running KMeans clustering on {num_samples} samples to estimate distribution")
+        from sklearn.cluster import KMeans
         self.kmeans = KMeans(n_clusters=10, random_state=0, n_init="auto")
         cluster_assignments = self.kmeans.fit_predict(features)
-
+        
         counts = np.bincount(cluster_assignments, minlength=10)
         distribution = counts / counts.sum()
+        
         global_distribution = {i: float(distribution[i]) for i in range(10)}
-
+        
         print("[SSLEntropy] Estimated global pseudo-class distribution:")
         for i in range(10):
             print(f"  Pseudo-class {i}: {global_distribution[i]:.4f}")
+        
+        return global_distribution
 
-        return self.ssl_model, global_distribution
+    def compute_class_centroids(self, model, labeled_loader):
+        """
+        Compute class centroids from labeled data using the SSL model features
+        
+        Args:
+            model: The current model
+            labeled_loader: DataLoader for labeled samples
+            
+        Returns:
+            dict: Class centroids mapping class -> centroid vector
+        """
+        print("[SSLEntropy] Computing class centroids from labeled data")
+        
+        model_device = next(model.parameters()).device
+        self.ssl_model = self.ssl_model.to(model_device)
+        self.ssl_model.eval()
+        
+        # Store embeddings by class
+        class_embeddings = {}
+        
+        with torch.no_grad():
+            for inputs, targets in labeled_loader:
+                inputs = inputs.to(model_device)
+                
+                # Extract features using the SSL model
+                batch_features = self.ssl_model.get_features(inputs)
+                batch_features = batch_features.cpu().numpy()
+                
+                # Group by class
+                for i, target in enumerate(targets.numpy()):
+                    if target not in class_embeddings:
+                        class_embeddings[target] = []
+                    class_embeddings[target].append(batch_features[i])
+        
+        # Compute centroids for each class
+        centroids = {}
+        for cls, embeddings in class_embeddings.items():
+            if embeddings:  # Ensure we have embeddings for this class
+                centroids[cls] = np.mean(np.stack(embeddings), axis=0)
+                
+        if self.debug:
+            print(f"[SSLEntropy] Computed centroids for {len(centroids)} classes")
+        
+        return centroids
+    
+    def extract_features(self, model, data_loader):
+        """
+        Extract features from data using the SSL model
+        
+        Args:
+            model: The current model
+            data_loader: DataLoader for data samples
+            
+        Returns:
+            tuple: (features, indices, entropy_scores)
+        """
+        model_device = next(model.parameters()).device
+        self.ssl_model = self.ssl_model.to(model_device)
+        
+        features = []
+        indices = []
+        entropy_scores = []
+
+        model.eval()
+        self.ssl_model.eval()
+        
+        with torch.no_grad():
+            for batch_idx, (inputs, _) in enumerate(data_loader):
+                inputs = inputs.to(model_device)
+                
+                # Use features from the SimCLR model
+                batch_features = self.ssl_model.get_features(inputs)
+                if self.debug and batch_idx == 0:
+                    print(f"[SSLEntropy] Using SimCLR model features (dim={batch_features.size(1)})")
+                        
+                features.append(batch_features.cpu().numpy())
+
+                # Calculate entropy from the current model
+                outputs = model(inputs)
+                if isinstance(outputs, tuple):
+                    outputs = outputs[0]
+                log_probs = F.log_softmax(outputs, dim=1)
+                probs = torch.exp(log_probs)
+                batch_entropy = -torch.sum(probs * log_probs, dim=1)
+                entropy_scores.extend(batch_entropy.cpu().numpy())
+
+                batch_indices = data_loader.sampler.indices[
+                    batch_idx * data_loader.batch_size:
+                    min((batch_idx + 1) * data_loader.batch_size, len(data_loader.sampler))
+                ]
+                indices.extend(batch_indices)
+
+        features = np.vstack(features)
+        entropy_scores = np.array(entropy_scores)
+        
+        return features, indices, entropy_scores
+    
+    def assign_pseudo_labels(self, features, class_centroids):
+        """
+        Assign pseudo-labels to samples based on nearest class centroid
+        
+        Args:
+            features: numpy array of feature vectors
+            class_centroids: dict mapping class -> centroid vector
+            
+        Returns:
+            tuple: (pseudo_labels, confidence_scores)
+        """
+        if not class_centroids or len(class_centroids) == 0:
+            print("[SSLEntropy] Error: No class centroids available for pseudo-labeling")
+            return None, None
+            
+        # Stack centroids into a matrix for efficient computation
+        centroid_classes = sorted(class_centroids.keys())
+        centroid_matrix = np.stack([class_centroids[c] for c in centroid_classes])
+        
+        # Compute cosine similarity between features and centroids
+        similarity = cosine_similarity(features, centroid_matrix)
+        
+        # Get the most similar centroid for each sample
+        most_similar_idx = np.argmax(similarity, axis=1)
+        pseudo_labels = np.array([centroid_classes[idx] for idx in most_similar_idx])
+        
+        # Use the similarity score as confidence
+        confidence_scores = np.max(similarity, axis=1)
+        
+        if self.debug:
+            print(f"[SSLEntropy] Assigned pseudo-labels to {len(pseudo_labels)} samples")
+                
+        return pseudo_labels, confidence_scores
     
     def compute_target_counts(self, current_distribution, num_samples, labeled_set_size, available_classes):
         """
-        Compute the target number of samples to select from each class with advanced balancing.
+        Compute the target number of samples to select from each class with balancing.
         
         Args:
             current_distribution (dict): Current class distribution.
@@ -121,21 +253,14 @@ class SSLEntropySampler:
         future_size = labeled_set_size + num_samples
         
         if self.debug:
-            print(f"[SSLEntropy] Planning to select {num_samples} samples")
-            print(f"[SSLEntropy] Future labeled set size will be: {future_size}")
-            print(f"[SSLEntropy] Available classes in unlabeled pool: {sorted(list(available_classes))}")  
-        
-        # Check the current representation of available classes
-        available_class_counts = {}
-        for cls in available_classes:
-            available_class_counts[cls] = current_distribution.get(cls, 0) * labeled_set_size
+            print(f"[SSLEntropy] Planning to select {num_samples} samples from {len(available_classes)} available classes")
         
         # Calculate representation ratios for available classes
         # This measures how well each class is represented compared to its target
         representation_ratios = {}
         missing_classes = []
+        
         for cls in available_classes:
-            current_count = available_class_counts[cls]
             target_global_ratio = self.global_class_distribution[cls]
             
             # Calculate representation ratio
@@ -143,173 +268,81 @@ class SSLEntropySampler:
                 current_ratio = current_distribution.get(cls, 0)
                 ratio = current_ratio / target_global_ratio if target_global_ratio > 0 else float('inf')
                 representation_ratios[cls] = ratio
+                
+                # Identify missing classes (0 samples)
+                if current_ratio == 0:
+                    missing_classes.append(cls)
             else:
                 # If no labeled samples yet, all classes are equally unrepresented
                 representation_ratios[cls] = 0.0
-            
-            # Identify missing classes (0 samples)
-            if current_count == 0:
-                missing_classes.append(cls)
-
-        # Determine if we have missing classes to prioritize
-        have_missing_classes = len(missing_classes) > 0
         
-        # First approach: Prioritize missing classes
-        if have_missing_classes and len(missing_classes) <= num_samples:
-            # Assign at least one sample to each missing class
-            initial_allocation = min(5, num_samples // len(missing_classes))  # More aggressive initial allocation
+        # First prioritize missing classes
+        if missing_classes and labeled_set_size > 0:
+            # Allocate some samples to each missing class
+            samples_per_missing = max(1, min(5, num_samples // len(missing_classes)))
             for cls in missing_classes:
-                target_counts[cls] = initial_allocation
+                target_counts[cls] = samples_per_missing
+            
             remaining = num_samples - sum(target_counts.values())
-            
-            # Distribute remaining samples to all available classes inversely proportional to representation
-            if remaining > 0:
-                # Prepare for inverse-proportional allocation
-                total_inverse_ratio = 0
-                inverse_ratios = {}
-                
-                for cls in available_classes:
-                    ratio = representation_ratios.get(cls, 0)
-                    inverse = 1.0 / (ratio + 0.01) if ratio > 0 else 100  # Avoid division by zero
-                    inverse_ratios[cls] = inverse
-                    total_inverse_ratio += inverse
-                
-                # Allocate remaining budget proportionally to inverse ratios
-                for cls in available_classes:
-                    if total_inverse_ratio > 0:
-                        additional = int(np.floor(remaining * inverse_ratios[cls] / total_inverse_ratio))
-                        target_counts[cls] = target_counts.get(cls, 0) + additional
-        
-        # Second approach: Balance based on representation ratios
         else:
-            # Calculate target based on future global distribution
-            for cls in available_classes:
-                # Target count for this class in the future labeled set
-                target_global_count = self.global_class_distribution[cls] * future_size
-                
-                # Current count for this class
-                current_count = current_distribution.get(cls, 0) * labeled_set_size
-                
-                # How many samples we need to add to reach target
-                samples_needed = max(0, int(np.ceil(target_global_count - current_count)))
-                target_counts[cls] = samples_needed
-        
-        # If the sum of target counts exceeds budget, adjust proportionally but prioritize underrepresented
-        total_target = sum(target_counts.values())
-        if total_target > num_samples:
-            # Sort classes by representation ratio (lowest first = most underrepresented)
-            sorted_classes = sorted(available_classes, key=lambda cls: representation_ratios.get(cls, float('inf')))
-            
-            # Reset target counts
-            target_counts = {cls: 0 for cls in available_classes}
-            
-            # Distribute budget prioritizing most underrepresented classes
             remaining = num_samples
-            for cls in sorted_classes:
-                if remaining <= 0:
-                    break
-                
-                # Allocate more aggressively to underrepresented classes
-                ratio = representation_ratios.get(cls, 1.0)
-                
-                # Very underrepresented classes get more budget
-                if ratio < 0.5:
-                    # The lower the ratio, the higher percentage of remaining budget
-                    percentage = 0.9  # 90% of remaining for very underrepresented
-                elif ratio < 0.8:
-                    percentage = 0.1  # 10% for moderately underrepresented
-                else:
-                    percentage = 0.0  # 0% for well-represented classes
-                
-                allocation = min(remaining, int(np.ceil(remaining * percentage)))
-                target_counts[cls] = allocation
-                remaining -= allocation
         
-        # If there's still remaining budget, distribute it to maximize balance
-        remaining = num_samples - sum(target_counts.values())
+        # Then distribute remaining samples inversely proportional to representation
         if remaining > 0:
-            if self.debug:
-                print(f"[SSLEntropy] Distributing {remaining} remaining samples to maximize balance")
-            
-            # Sort by current representation after initial allocation
-            # We need to recalculate the projected ratios after our initial allocation
-            projected_counts = {}
-            projected_ratios = {}
+            # Calculate inverse ratios (lower ratio = higher priority)
+            inverse_ratios = {}
+            total_inverse = 0
             
             for cls in available_classes:
-                # Calculate the projected count after initial allocation
-                current_count = current_distribution.get(cls, 0) * labeled_set_size
-                projected_counts[cls] = current_count + target_counts.get(cls, 0)
-                
-                # Get the projected ratio compared to target
-                projected_ratio = projected_counts[cls] / (future_size * self.global_class_distribution[cls]) \
-                    if (future_size * self.global_class_distribution[cls]) > 0 else float('inf')
-                projected_ratios[cls] = projected_ratio
+                ratio = representation_ratios.get(cls, 0)
+                # Adding a small constant to avoid division by zero
+                inverse = 1.0 / (ratio + 0.01) if ratio > 0 else 100
+                inverse_ratios[cls] = inverse
+                total_inverse += inverse
             
-            # Sort classes by projected ratio (lowest first)
-            sorted_classes = sorted(available_classes, key=lambda cls: projected_ratios.get(cls, float('inf')))
+            # Distribute remaining samples proportionally to inverse ratios
+            allocated = 0
+            for cls in sorted(available_classes, key=lambda c: representation_ratios.get(c, float('inf'))):
+                if total_inverse > 0:
+                    to_allocate = int(np.floor(remaining * inverse_ratios[cls] / total_inverse))
+                    # Ensure we allocate at least 1 sample to each class if possible
+                    to_allocate = max(1, to_allocate) if remaining - allocated >= len(available_classes) - len(target_counts) else to_allocate
+                    target_counts[cls] = target_counts.get(cls, 0) + to_allocate
+                    allocated += to_allocate
             
-            # Distribute remaining budget to most underrepresented classes first
-            idx = 0
-            while remaining > 0 and idx < len(sorted_classes):
-                cls = sorted_classes[idx]
-                target_counts[cls] = target_counts.get(cls, 0) + 1
-                remaining -= 1
-                
-                # Cycle through underrepresented classes to maintain balance
-                idx = (idx + 1) % len(sorted_classes)
-                
-                # If we've gone through all classes once, re-sort based on updated projections
-                if idx == 0 and remaining > 0:
-                    # Update projected counts and ratios
-                    for c in available_classes:
-                        current_count = current_distribution.get(c, 0) * labeled_set_size
-                        projected_counts[c] = current_count + target_counts.get(c, 0)
-                        projected_ratio = projected_counts[c] / (future_size * self.global_class_distribution[c]) \
-                            if (future_size * self.global_class_distribution[c]) > 0 else float('inf')
-                        projected_ratios[c] = projected_ratio
-                    
-                    # Re-sort based on updated projections
-                    sorted_classes = sorted(available_classes, key=lambda c: projected_ratios.get(c, float('inf')))
-        
-        # Final verification that we're using exactly the budget
-        final_count = sum(target_counts.values())
-        if final_count != num_samples:
-            print(f"[SSLEntropy] WARNING: Target count {final_count} doesn't match budget {num_samples}")
-            
-            # Force exact budget usage
-            diff = num_samples - final_count
-            if diff > 0:
-                # Need to add more samples
-                sorted_classes = sorted(available_classes, 
-                                         key=lambda cls: representation_ratios.get(cls, float('inf')))
-                for cls in sorted_classes:
-                    if diff <= 0:
-                        break
+            # If we still have samples left, distribute one by one to the most underrepresented classes
+            remaining_after_allocation = num_samples - sum(target_counts.values())
+            if remaining_after_allocation > 0:
+                sorted_classes = sorted(available_classes, key=lambda c: representation_ratios.get(c, float('inf')))
+                idx = 0
+                while remaining_after_allocation > 0 and idx < len(sorted_classes):
+                    cls = sorted_classes[idx]
                     target_counts[cls] = target_counts.get(cls, 0) + 1
-                    diff -= 1
-            else:
-                # Need to remove some samples
-                sorted_classes = sorted(available_classes, 
-                                         key=lambda cls: -representation_ratios.get(cls, float('inf')))
-                for cls in sorted_classes:
-                    if diff >= 0 or target_counts.get(cls, 0) <= 0:
-                        break
-                    target_counts[cls] = target_counts.get(cls, 0) - 1
-                    diff += 1
+                    remaining_after_allocation -= 1
+                    idx = (idx + 1) % len(sorted_classes)
         
         if self.debug:
             print(f"[SSLEntropy] Target counts per class: {target_counts}")
-            print(f"[SSLEntropy] Total samples to select: {sum(target_counts.values())}")
+            print(f"[SSLEntropy] Target selection: {sum(target_counts.values())} samples across {len(target_counts)} classes")
         
         return target_counts
-
+        
     def select_samples(self, model, model_server, unlabeled_loader, client_id, unlabeled_set, num_samples, labeled_set=None, seed=None):
-        print("[SSLEntropy] Selecting samples using pseudo-labels and global distribution with advanced balancing")
+        print("[SSLEntropy] Selecting samples using centroid-based pseudo-labels and global distribution")
 
         if self.debug:
             print(f"\n[SSLEntropy] Client {client_id}: Selecting {num_samples} samples")
             print(f"[SSLEntropy] Unlabeled pool size: {len(unlabeled_set)}")
+            if labeled_set is not None:
+                print(f"[SSLEntropy] Labeled set size: {len(labeled_set)}")
+            else:
+                print("[SSLEntropy] No labeled set provided")
+        
+        # Move SSL model to match client model device
+        model_device = next(model.parameters()).device
+        if next(self.ssl_model.parameters()).device != model_device:
+            print(f"[SSLEntropy] Moving SSL model from {next(self.ssl_model.parameters()).device} to {model_device}")
+            self.ssl_model = self.ssl_model.to(model_device)
             
         # Track current cycle for this client
         if not hasattr(self, 'client_cycles'):
@@ -325,58 +358,14 @@ class SSLEntropySampler:
             
         # Use the labeled set to track previously selected samples
         total_labeled = 0
-        labeled_pseudo_counts = {i: 0 for i in range(10)}
+        labeled_class_counts = {i: 0 for i in range(10)}
         
-        # Extract features and pseudo-labels for all unlabeled samples
-        model.eval()
-        # Put the SimCLR model in eval mode
-        self.ssl_model.eval()
-            
-        features = []
-        indices = []
-        entropy_scores = []
-
-        with torch.no_grad():
-            for batch_idx, (inputs, _) in enumerate(unlabeled_loader):
-                inputs = inputs.to(self.device)
-                
-                # Use features from the SimCLR model
-                batch_features = self.ssl_model.get_features(inputs)
-                if self.debug and batch_idx == 0:
-                    print(f"[SSLEntropy] Using SimCLR model features (dim={batch_features.size(1)})")
-                        
-                features.append(batch_features.cpu().numpy())
-
-                outputs = model(inputs)
-                if isinstance(outputs, tuple):
-                    outputs = outputs[0]
-                log_probs = F.log_softmax(outputs, dim=1)
-                probs = torch.exp(log_probs)
-                batch_entropy = -torch.sum(probs * log_probs, dim=1)
-                entropy_scores.extend(batch_entropy.cpu().numpy())
-
-                batch_indices = unlabeled_loader.sampler.indices[
-                    batch_idx * unlabeled_loader.batch_size:
-                    min((batch_idx + 1) * unlabeled_loader.batch_size, len(unlabeled_loader.sampler))
-                ]
-                indices.extend(batch_indices)
-
-        features = np.vstack(features)
-        entropy_scores = np.array(entropy_scores)
-        
-        # Assign pseudo-labels to unlabeled samples
-        cluster_assignments = self.kmeans.predict(features)
-        pseudo_labels = cluster_assignments
-        
-        # If labeled set exists, extract its pseudo-labels to calculate current distribution
+        # Step 1: If we have labeled data, compute class centroids
+        class_centroids = None
         if labeled_set is not None and len(labeled_set) > 0:
             total_labeled = len(labeled_set)
             
-            # Create a small dataloader for the labeled set to extract features
-            from torch.utils.data import DataLoader
-            from data.sampler import SubsetSequentialSampler
-            
-            # Use the same dataset as unlabeled_loader but with the labeled indices
+            # Create a dataloader for the labeled set
             labeled_loader = DataLoader(
                 unlabeled_loader.dataset,
                 batch_size=unlabeled_loader.batch_size,
@@ -384,36 +373,66 @@ class SSLEntropySampler:
                 num_workers=0
             )
             
-            # Extract features for labeled samples
-            labeled_features = []
-            with torch.no_grad():
-                for inputs, _ in labeled_loader:
-                    inputs = inputs.to(self.device)
-                    # Use get_features method for SimCLR model
-                    batch_features = self.ssl_model.get_features(inputs)
-                    labeled_features.append(batch_features.cpu().numpy())
+            # Get actual labels to compute current distribution
+            labeled_classes = []
+            for _, targets in labeled_loader:
+                labeled_classes.extend(targets.numpy())
             
-            if labeled_features:
-                labeled_features = np.vstack(labeled_features)
-                labeled_pseudo_labels = self.kmeans.predict(labeled_features)
+            # Count by class
+            for label in labeled_classes:
+                labeled_class_counts[label] += 1
                 
-                # Count by pseudo-label
-                for label in labeled_pseudo_labels:
-                    labeled_pseudo_counts[label] += 1
+            # Compute class centroids from labeled data
+            class_centroids = self.compute_class_centroids(model, labeled_loader)
+            
+            # Print current distribution of labeled data
+            print(f"[SSLEntropy] Current class distribution in labeled set:")
+            for cls in range(10):
+                percentage = (labeled_class_counts.get(cls, 0) / total_labeled * 100) if total_labeled > 0 else 0
+                print(f"  Class {cls}: {labeled_class_counts.get(cls, 0)} samples ({percentage:.1f}%)")
+            
+            # Summarize current distribution of labeled data
+            print(f"[SSLEntropy] Current labeled set: {total_labeled} samples across {len([c for c, count in labeled_class_counts.items() if count > 0])} classes")
+                
+            # Check if we have centroids for all classes
+            missing_centroids = [cls for cls in range(10) if cls not in class_centroids]
+            if missing_centroids:
+                print(f"[SSLEntropy] Warning: Missing centroids for classes: {missing_centroids}")
+        else:
+            print("[SSLEntropy] No labeled data available to compute class centroids")
+            
+        # Step 2: Extract features from unlabeled data
+        print("[SSLEntropy] Extracting features from unlabeled data")
+        features, indices, entropy_scores = self.extract_features(model, unlabeled_loader)
+        print(f"[SSLEntropy] Extracted features for {len(features)} unlabeled samples")
         
-        # Calculate current distribution from labeled pseudo-labels
-        current_distribution = {cls: count/total_labeled for cls, count in labeled_pseudo_counts.items()} if total_labeled > 0 else {cls: 0 for cls in range(10)}
+        # Step 3: Assign pseudo-labels using class centroids
+        pseudo_labels = None
+        confidence_scores = None
         
-        # Print current distribution of labeled data
-        print(f"[SSLEntropy] Current pseudo-class distribution:")
-        for cls in range(10):
-            percentage = current_distribution.get(cls, 0) * 100
-            print(f"    Pseudo-class {cls}: {labeled_pseudo_counts.get(cls, 0)} samples ({percentage:.1f}%)")
+        if class_centroids and len(class_centroids.keys()) > 0:
+            # Use centroid-based pseudo-labeling
+            print("[SSLEntropy] Assigning pseudo-labels using class centroids")
+            pseudo_labels, confidence_scores = self.assign_pseudo_labels(features, class_centroids)
+            if pseudo_labels is None:
+                print("[SSLEntropy] Failed to assign pseudo-labels, falling back to model predictions")
+                # Fall back to model predictions
+                pseudo_labels, confidence_scores = self._get_model_predictions(model, unlabeled_loader)
+            else:
+                print(f"[SSLEntropy] Successfully assigned centroid-based pseudo-labels to {len(pseudo_labels)} samples")
+        else:
+            # If we don't have centroids, use model predictions
+            print("[SSLEntropy] No class centroids available, using model predictions as pseudo-labels")
+            pseudo_labels, confidence_scores = self._get_model_predictions(model, unlabeled_loader)
+            
+        # Calculate current distribution from labeled data
+        current_distribution = {cls: count/total_labeled for cls, count in labeled_class_counts.items()} if total_labeled > 0 else {i: 0 for i in range(10)}
         
-        # Organize unlabeled samples by pseudo-class with their entropy scores
+        # Step 4: Select samples based on class distribution and confidence
+        # Organize samples by pseudo-class
         class_to_samples = {i: [] for i in range(10)}
-        for idx, label, entropy in zip(indices, pseudo_labels, entropy_scores):
-            class_to_samples[label].append((idx, entropy))
+        for idx, sample_idx, label, entropy, confidence in zip(range(len(indices)), indices, pseudo_labels, entropy_scores, confidence_scores):
+            class_to_samples[label].append((sample_idx, entropy, confidence))
         
         # Get available classes in the unlabeled pool
         available_classes = set(pseudo_labels)
@@ -422,15 +441,13 @@ class SSLEntropySampler:
         available_by_class = {cls: len(samples) for cls, samples in class_to_samples.items() if cls in available_classes}
         print(f"[SSLEntropy] Available unlabeled samples by pseudo-class: {available_by_class}")
         
-        # Calculate the target counts using the advanced balancing method
+        # Calculate target counts for each class
         target_counts = self.compute_target_counts(
             current_distribution, 
             num_samples, 
             total_labeled, 
             available_classes
         )
-        
-        print(f"[SSLEntropy] Target counts to add by pseudo-class: {target_counts}")
         
         # Check if target counts are achievable
         for cls, count in target_counts.items():
@@ -453,6 +470,8 @@ class SSLEntropySampler:
             # Redistribute to classes with extra capacity, prioritizing most underrepresented
             if extra_capacity:
                 remaining = num_samples - total_adjusted
+                print(f"[SSLEntropy] Redistributing {remaining} samples to classes with extra capacity")
+                
                 # Sort classes by representation ratio
                 if total_labeled > 0:
                     sorted_classes = sorted(
@@ -469,107 +488,99 @@ class SSLEntropySampler:
                     take = min(remaining, extra_capacity[cls])
                     target_counts[cls] = target_counts.get(cls, 0) + take
                     remaining -= take
+                    # No need to log each redistribution
                     if remaining <= 0:
                         break
-        
-        # Select samples based on entropy within each pseudo-class
+                
+                print(f"[SSLEntropy] Updated target counts after redistribution: {target_counts}")
+                print(f"[SSLEntropy] After redistribution: {sum(target_counts.values())} samples across {len(target_counts)} classes")
+                
+        # Select samples from each class based on target counts
         selected_samples = []
-        balanced_selections = {}
         
-        # Process classes in order of target count (highest first) for logging clarity
-        sorted_classes = sorted(target_counts.keys(), key=lambda cls: target_counts.get(cls, 0), reverse=True)
-        
-        for cls in sorted_classes:
-            if target_counts[cls] > 0:
-                if cls not in class_to_samples or len(class_to_samples[cls]) == 0:
-                    print(f"[SSLEntropy] No unlabeled samples available for pseudo-class {cls}")
-                    continue
+        # Select samples from each class
+        for cls, count in target_counts.items():
+            if count > 0 and cls in class_to_samples and class_to_samples[cls]:
+                # Sort samples by confidence (highest first)
+                samples_in_class = class_to_samples[cls]
+                samples_in_class.sort(key=lambda x: x[2], reverse=True)
                 
-                # Sort samples by entropy (highest first)
-                class_samples = class_to_samples[cls]
-                class_samples.sort(key=lambda x: x[1], reverse=True)
-                
-                # Select top samples by entropy
-                num_to_select = min(target_counts[cls], len(class_samples))
-                selected_indices = [sample[0] for sample in class_samples[:num_to_select]]
+                # Select top confident samples
+                to_select = min(count, len(samples_in_class))
+                selected_indices = [sample[0] for sample in samples_in_class[:to_select]]
                 selected_samples.extend(selected_indices)
                 
-                balanced_selections[cls] = num_to_select
-                print(f"[SSLEntropy] Selected {num_to_select} samples from pseudo-class {cls}")
-        
-        # Calculate how much of the budget went to balanced selection
-        balanced_count = len(selected_samples)
-        balanced_percentage = balanced_count / num_samples * 100 if num_samples > 0 else 0
-        print(f"[SSLEntropy] Selected {balanced_count}/{num_samples} samples ({balanced_percentage:.1f}%) using class balancing")
-        print(f"[SSLEntropy] Class-balanced selections: {balanced_selections}")
-        
-        # Double-check: Are we missing any selection?
-        remaining_to_select = num_samples - len(selected_samples)
-        if remaining_to_select > 0:
-            print(f"[SSLEntropy] WARNING: Still need to select {remaining_to_select} samples")
-            print(f"[SSLEntropy] This should not happen with proper budget allocation!")
-            
-            # As a failsafe, select additional samples from underrepresented classes
-            # We'll prioritize by representation ratio rather than just entropy
-            remaining_samples = []
-            for i, idx in enumerate(unlabeled_set):
-                if idx not in selected_samples and i < len(pseudo_labels):
-                    label = pseudo_labels[i]
-                    ratio = current_distribution.get(label, 0) / self.global_class_distribution[label] \
-                        if self.global_class_distribution[label] > 0 else float('inf')
-                    remaining_samples.append((idx, entropy_scores[i], label, ratio))
-            
-            # Sort by representation ratio (lowest first), then by entropy (highest first)
-            remaining_samples.sort(key=lambda x: (x[3], -x[1]))
-            
-            # Select additional samples
-            additional_samples = [sample[0] for sample in remaining_samples[:remaining_to_select]]
-            selected_samples.extend(additional_samples)
-            
-            additional_labels = [sample[2] for sample in remaining_samples[:remaining_to_select]]
-            additional_by_class = {}
-            for cls in range(10):
-                additional_by_class[cls] = sum(1 for label in additional_labels if label == cls)
+                # Log selection per class
+                print(f"[SSLEntropy] Selected {to_select} samples from pseudo-class {cls} (highest confidence first)")
                 
-            print(f"[SSLEntropy] FAILSAFE - Additional samples by pseudo-class: {additional_by_class}")
-            print(f"[SSLEntropy] Selected {len(additional_samples)} additional samples from underrepresented classes")
-            
+        # Verify we selected the correct number of samples
+        if len(selected_samples) < num_samples:
+            print(f"[SSLEntropy] Warning: Only selected {len(selected_samples)}/{num_samples} samples")
+            # Select additional samples based on entropy if needed
+            remaining = num_samples - len(selected_samples)
+            if remaining > 0:
+                # Create a list of (index, entropy) for unselected samples
+                unselected = [(idx, entropy_scores[i]) for i, idx in enumerate(indices) 
+                            if idx not in selected_samples]
+                
+                # Sort by entropy (highest first)
+                unselected.sort(key=lambda x: x[1], reverse=True)
+                
+                # Select additional samples
+                additional = [item[0] for item in unselected[:remaining]]
+                selected_samples.extend(additional)
+                print(f"[SSLEntropy] Selected {len(additional)} additional samples based on entropy")
+        
         # Calculate remaining unlabeled samples
         remaining_unlabeled = [idx for idx in unlabeled_set if idx not in selected_samples]
         
-        # Debug info about final selection
-        selected_pseudo_classes = [pseudo_labels[indices.index(idx)] if idx in indices else -1 for idx in selected_samples]
-        final_class_counts = {}
-        for cls in range(10):
-            final_class_counts[cls] = sum(1 for label in selected_pseudo_classes if label == cls)
+        # Track selections
+        self.client_labeled_sets[client_id].extend(selected_samples)
         
-        print(f"\n[SSLEntropy] Final selection pseudo-class distribution:")
-        for cls in range(10):
-            count = final_class_counts.get(cls, 0)
-            percentage = count / len(selected_samples) * 100 if len(selected_samples) > 0 else 0
-            target = target_counts.get(cls, 0)
-            print(f"    Pseudo-class {cls}: {count} samples ({percentage:.1f}%) [Target: {target}]")
-            
-        print(f"[SSLEntropy] Total selected: {len(selected_samples)} out of budget {num_samples}")
+        # Add detailed class summary to final selection report
+        selected_class_counts = {}
+        for idx in selected_samples:
+            if idx in indices:
+                selected_class = pseudo_labels[indices.index(idx)]
+                selected_class_counts[selected_class] = selected_class_counts.get(selected_class, 0) + 1
+                
+        print(f"[SSLEntropy] Final selection by pseudo-class:")
+        for cls in sorted(selected_class_counts.keys()):
+            count = selected_class_counts[cls]
+            percentage = count / len(selected_samples) * 100
+            print(f"  Pseudo-class {cls}: {count} samples ({percentage:.1f}%)")
         
-        # Track selections for reference
-        self.client_labeled_sets[client_id] = self.client_labeled_sets.get(client_id, []) + selected_samples
-        
-        # Calculate the new distribution after this selection
-        future_distribution = {}
-        future_size = total_labeled + len(selected_samples)
-        for cls in range(10):
-            future_distribution[cls] = (labeled_pseudo_counts.get(cls, 0) + final_class_counts.get(cls, 0)) / future_size
-        
-        # Calculate how close we got to the global distribution
-        dist_error = sum(abs(future_distribution.get(cls, 0) - self.global_class_distribution[cls]) for cls in range(10)) / 2
-        print(f"[SSLEntropy] Distribution error after selection: {dist_error:.4f} (lower is better)")
-        
-        # Display improvement compared to initial distribution
-        if total_labeled > 0:
-            initial_distribution = {cls: count/total_labeled for cls, count in labeled_pseudo_counts.items()}
-            initial_error = sum(abs(initial_distribution.get(cls, 0) - self.global_class_distribution[cls]) for cls in range(10)) / 2
-            improvement = initial_error - dist_error
-            print(f"[SSLEntropy] Initial error: {initial_error:.4f}, Improvement: {improvement:.4f} ({improvement/initial_error*100:.1f}%)")
+        print(f"[SSLEntropy] Final selection: {len(selected_samples)} samples across {len(selected_class_counts)} classes")
         
         return selected_samples, remaining_unlabeled
+        
+    def _get_model_predictions(self, model, data_loader):
+        """
+        Get model predictions as pseudo-labels
+        
+        Args:
+            model: The current model
+            data_loader: DataLoader for data samples
+            
+        Returns:
+            tuple: (pseudo_labels, confidence_scores)
+        """
+        model_device = next(model.parameters()).device
+        
+        all_probs = []
+        model.eval()
+        
+        with torch.no_grad():
+            for inputs, _ in data_loader:
+                inputs = inputs.to(model_device)
+                outputs = model(inputs)
+                if isinstance(outputs, tuple):
+                    outputs = outputs[0]
+                probs = F.softmax(outputs, dim=1)
+                all_probs.append(probs.cpu().numpy())
+                
+        all_probs = np.vstack(all_probs)
+        pseudo_labels = np.argmax(all_probs, axis=1)
+        confidence_scores = np.max(all_probs, axis=1)
+        
+        return pseudo_labels, confidence_scores
