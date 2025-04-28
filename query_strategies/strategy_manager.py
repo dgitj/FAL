@@ -9,17 +9,19 @@ from query_strategies.entropy_global_optimal import ClassBalancedEntropySampler
 from query_strategies.coreset import CoreSetSampler
 from query_strategies.coreset_global_optimal import ClassBalancedCoreSetSampler
 from query_strategies.ssl_entropy import SSLEntropySampler
+from query_strategies.pseudo_entropy import PseudoClassBalancedEntropySampler
 
 from config import ACTIVE_LEARNING_STRATEGY
 
 class StrategyManager:
-    def __init__(self, strategy_name, loss_weight_list=None, device="cuda", global_autoencoder=None):
+    def __init__(self, strategy_name, loss_weight_list=None, device="cuda", global_autoencoder=None, confidence_threshold=None):
         self.device = device
         self.strategy_name = strategy_name
         self.loss_weight_list = loss_weight_list
         self.clients_processed = 0
         self.total_clients = 0
         self.labeled_set_list = None
+        self.confidence_threshold = confidence_threshold
         
         # Initialize the sampling strategy
         self.sampler = self._initialize_strategy(strategy_name, loss_weight_list)
@@ -92,6 +94,12 @@ class StrategyManager:
             # Now we don't need to pass the global_autoencoder, as the SSLEntropySampler will load
             # the SimCLR model from checkpoint
             return SSLEntropySampler(self.device)
+            
+        elif strategy_name == "PseudoEntropy":
+            # Use provided confidence threshold or default to 0.0
+            confidence = self.confidence_threshold if self.confidence_threshold is not None else 0.0
+            print(f"[StrategyManager] Initializing PseudoEntropy with confidence threshold: {confidence}")
+            return PseudoClassBalancedEntropySampler(self.device, confidence_threshold=confidence)
 
         else:
             raise ValueError(f"Invalid strategy name: {strategy_name}")
@@ -142,7 +150,7 @@ class StrategyManager:
             if self.labeled_set_list is not None and c < len(self.labeled_set_list):
                 labeled_set = self.labeled_set_list[c]
             return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, labeled_set=labeled_set, seed=seed)
-        elif self.strategy_name in ["GlobalOptimal", "CoreSetGlobalOptimal", "SSLEntropy"]:
+        elif self.strategy_name in ["GlobalOptimal", "CoreSetGlobalOptimal", "SSLEntropy", "PseudoEntropy"]:
             # These strategies need both models, client ID, and access to true labels
             labeled_set = None
             if self.labeled_set_list is not None and c < len(self.labeled_set_list):

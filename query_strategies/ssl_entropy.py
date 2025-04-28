@@ -2,10 +2,18 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import os
+import sys
 from sklearn.metrics.pairwise import cosine_similarity
 from torchvision.datasets import CIFAR10
 import torchvision.transforms as T
+from models.ssl.resnet50_contrastive import ContrastiveModel
 from models.ssl.contrastive_model import SimpleContrastiveLearning
+from models.ssl.model_utils import load_checkpoint_flexible
+
+# Import custom model creator
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+#from create_matching_model import CustomContrastiveModel
+
 from torch.utils.data import DataLoader
 from data.sampler import SubsetSequentialSampler
 from sklearn.cluster import KMeans
@@ -14,9 +22,13 @@ from sklearn.cluster import KMeans
 from config import USE_GLOBAL_SSL
 
 class SSLEntropySampler:
-    def __init__(self, device="cuda", global_autoencoder=None):
+    def __init__(self, device="cuda", global_autoencoder=None, distance_threshold=0.3, confidence_threshold=0.7):
         self.device = device if torch.cuda.is_available() and device == "cuda" else "cpu"
         self.debug = True
+        self.distance_threshold = distance_threshold
+        self.confidence_threshold = confidence_threshold
+        
+        print(f"[SSLEntropy] Using distance_threshold={distance_threshold}, confidence_threshold={confidence_threshold}")
         
         # Load SimCLR model from checkpoint
         print("[SSLEntropy] Loading SimCLR model from checkpoint")
@@ -36,20 +48,63 @@ class SSLEntropySampler:
         """Load SimCLR model from checkpoint"""
         # Define checkpoint path
         checkpoint_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'SSL_checkpoints')
+        
+        # Check if we should use ResNet50 model
         checkpoint_path = os.path.join(checkpoint_dir, 'final_checkpoint.pt')
         
         if not os.path.exists(checkpoint_path):
             raise ValueError(f"[SSLEntropy] Error: SSL checkpoint not found at {checkpoint_path}")
         
-        # Initialize SimCLR model
-        model = SimpleContrastiveLearning(feature_dim=128, temperature=0.5)
-        model = model.to(self.device)
+        # Log checkpoint information for debugging
+        checkpoint_size = os.path.getsize(checkpoint_path) / (1024 * 1024)  # Size in MB
+        checkpoint_modified = os.path.getmtime(checkpoint_path)
+        import datetime
+        modified_time = datetime.datetime.fromtimestamp(checkpoint_modified).strftime('%Y-%m-%d %H:%M:%S')
         
-        # Load checkpoint
-        print(f"[SSLEntropy] Loading checkpoint from {checkpoint_path}")
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        print(f"[SSLEntropy] Loaded SimCLR model from round {checkpoint['round']}")
+        print(f"[SSLEntropy] Loading checkpoint: {checkpoint_path}")
+        print(f"[SSLEntropy] Checkpoint size: {checkpoint_size:.2f} MB")
+        print(f"[SSLEntropy] Last modified: {modified_time}")
+        
+        # Calculate checkpoint hash for verification
+        import hashlib
+        with open(checkpoint_path, 'rb') as f:
+            file_hash = hashlib.md5(f.read()).hexdigest()
+        print(f"[SSLEntropy] Checkpoint MD5 hash: {file_hash}")
+        
+        # First, load a small part of the checkpoint to determine its structure
+        try:
+            # Load just metadata or a small portion to analyze structure
+            checkpoint_sample = torch.load(checkpoint_path, map_location=self.device)
+            # Check if it looks like a ResNet50 checkpoint by looking at key patterns
+            is_resnet50 = False
+            if isinstance(checkpoint_sample, dict):
+                # Check a few keys that would indicate ResNet50
+                key_list = list(checkpoint_sample.keys())
+                if any('layer4' in k for k in key_list) or \
+                   any('layer3' in k for k in key_list) or \
+                   any('encoder.layer' in k for k in key_list):
+                    is_resnet50 = True
+                    print(f"[SSLEntropy] Detected ResNet50 checkpoint structure")
+                else:
+                    print(f"[SSLEntropy] Detected standard encoder structure")
+            
+            # Initialize the appropriate model based on detected structure
+            print(f"[SSLEntropy] Creating custom model to match checkpoint structure")
+            model = CustomContrastiveModel(checkpoint_sample)
+            
+            model = model.to(self.device)
+            print(f"[SSLEntropy] Successfully created matching model")
+            
+            # Calculate model parameter hash for verification
+            model_hash = hash(str(sum(p.sum().item() for p in model.parameters())))
+            print(f"[SSLEntropy] Model parameter hash: {model_hash}")
+            
+            # No need to manually load state dict as it was already loaded during model creation
+            print(f"[SSLEntropy] Checkpoint loaded during model creation")
+                
+        except Exception as e:
+            print(f"[SSLEntropy] Error setting up model: {str(e)}")
+            raise
         
         model.eval()
         
@@ -72,7 +127,7 @@ class SSLEntropySampler:
         test_dataset = CIFAR10(dataset_dir, train=False, download=True, transform=test_transform)
         
         batch_size = 100
-        num_samples = min(10000, len(test_dataset))  
+        num_samples = min(5000, len(test_dataset))  
         indices = torch.randperm(len(test_dataset))[:num_samples]
         
         features_list = []
@@ -107,7 +162,7 @@ class SSLEntropySampler:
 
     def compute_class_centroids(self, model, labeled_loader):
         """
-        Compute class centroids from labeled data using the SSL model features
+        Compute class centroids from labeled data using the SSL model features with L2 normalization
         
         Args:
             model: The current model
@@ -116,7 +171,7 @@ class SSLEntropySampler:
         Returns:
             dict: Class centroids mapping class -> centroid vector
         """
-        print("[SSLEntropy] Computing class centroids from labeled data")
+        print("[SSLEntropy] Computing class centroids from labeled data with L2 normalization")
         
         model_device = next(model.parameters()).device
         self.ssl_model = self.ssl_model.to(model_device)
@@ -133,6 +188,10 @@ class SSLEntropySampler:
                 batch_features = self.ssl_model.get_features(inputs)
                 batch_features = batch_features.cpu().numpy()
                 
+                # Apply L2 normalization to embeddings
+                for i in range(len(batch_features)):
+                    batch_features[i] = batch_features[i] / np.linalg.norm(batch_features[i])
+                
                 # Group by class
                 for i, target in enumerate(targets.numpy()):
                     if target not in class_embeddings:
@@ -143,6 +202,7 @@ class SSLEntropySampler:
         centroids = {}
         for cls, embeddings in class_embeddings.items():
             if embeddings:  # Ensure we have embeddings for this class
+                # Note: Embeddings are already L2 normalized
                 centroids[cls] = np.mean(np.stack(embeddings), axis=0)
                 
         if self.debug:
@@ -179,8 +239,13 @@ class SSLEntropySampler:
                 batch_features = self.ssl_model.get_features(inputs)
                 if self.debug and batch_idx == 0:
                     print(f"[SSLEntropy] Using SimCLR model features (dim={batch_features.size(1)})")
+                
+                # Convert to numpy and normalize
+                np_features = batch_features.cpu().numpy()
+                for i in range(len(np_features)):
+                    np_features[i] = np_features[i] / np.linalg.norm(np_features[i])
                         
-                features.append(batch_features.cpu().numpy())
+                features.append(np_features)
 
                 # Calculate entropy from the current model
                 outputs = model(inputs)
@@ -204,37 +269,92 @@ class SSLEntropySampler:
     
     def assign_pseudo_labels(self, features, class_centroids):
         """
-        Assign pseudo-labels to samples based on nearest class centroid
+        Assign pseudo-labels to samples based on nearest class centroid, applying
+        both distance and confidence thresholds
         
         Args:
             features: numpy array of feature vectors
             class_centroids: dict mapping class -> centroid vector
             
         Returns:
-            tuple: (pseudo_labels, confidence_scores)
+            tuple: (pseudo_labels, confidence_scores, rejected_indices)
         """
         if not class_centroids or len(class_centroids) == 0:
             print("[SSLEntropy] Error: No class centroids available for pseudo-labeling")
-            return None, None
+            return None, None, None
             
         # Stack centroids into a matrix for efficient computation
         centroid_classes = sorted(class_centroids.keys())
         centroid_matrix = np.stack([class_centroids[c] for c in centroid_classes])
         
+        # Normalize the centroids (they may not be normalized if computed as means)
+        for i in range(len(centroid_matrix)):
+            centroid_matrix[i] = centroid_matrix[i] / np.linalg.norm(centroid_matrix[i])
+        
         # Compute cosine similarity between features and centroids
         similarity = cosine_similarity(features, centroid_matrix)
         
-        # Get the most similar centroid for each sample
-        most_similar_idx = np.argmax(similarity, axis=1)
-        pseudo_labels = np.array([centroid_classes[idx] for idx in most_similar_idx])
+        # Initialize arrays for pseudo-labels and confidence scores
+        pseudo_labels = np.zeros(len(features), dtype=int)
+        confidence_scores = np.zeros(len(features))
+        rejected_mask = np.zeros(len(features), dtype=bool)
         
-        # Use the similarity score as confidence
-        confidence_scores = np.max(similarity, axis=1)
+        # For each sample, apply distance and confidence thresholds
+        for i in range(len(features)):
+            # Get maximum similarity score (distance check)
+            max_similarity = np.max(similarity[i])
+            
+            # Check if the sample passes the distance threshold
+            if max_similarity < self.distance_threshold:
+                # Sample doesn't fit anywhere in the embedding space
+                rejected_mask[i] = True
+                continue
+                
+            # Get the most similar centroid
+            most_similar_idx = np.argmax(similarity[i])
+            max_confidence = similarity[i][most_similar_idx]
+            
+            # Check if the confidence exceeds the threshold
+            if max_confidence < self.confidence_threshold:
+                # Sample isn't confidently assigned to any class
+                rejected_mask[i] = True
+                continue
+                
+            # If we got here, the sample passed both checks
+            pseudo_labels[i] = centroid_classes[most_similar_idx]
+            confidence_scores[i] = max_confidence
+        
+        # Get indices of accepted and rejected samples
+        accepted_indices = np.where(~rejected_mask)[0]
+        rejected_indices = np.where(rejected_mask)[0]
+        
+        # Only keep labels and scores for accepted samples
+        accepted_pseudo_labels = pseudo_labels[accepted_indices]
+        accepted_confidence_scores = confidence_scores[accepted_indices]
         
         if self.debug:
-            print(f"[SSLEntropy] Assigned pseudo-labels to {len(pseudo_labels)} samples")
+            num_accepted = len(accepted_indices)
+            num_rejected = len(rejected_indices)
+            total = len(features)
+            print(f"[SSLEntropy] Assigned pseudo-labels to {num_accepted}/{total} samples ({num_accepted/total*100:.1f}%)")
+            print(f"[SSLEntropy] Rejected {num_rejected}/{total} samples ({num_rejected/total*100:.1f}%)")
+            print(f"[SSLEntropy] Reasons: distance threshold={self.distance_threshold}, confidence threshold={self.confidence_threshold}")
+            
+            # Count accepted samples by class
+            if num_accepted > 0:
+                accepted_counts = {}
+                for cls in np.unique(accepted_pseudo_labels):
+                    count = np.sum(accepted_pseudo_labels == cls)
+                    accepted_counts[cls] = count
+                    
+                print(f"[SSLEntropy] Accepted samples by class: {accepted_counts}")
                 
-        return pseudo_labels, confidence_scores
+        # Convert to lists of original indices
+        filtered_indices = [accepted_indices[i] for i in range(len(accepted_indices))]
+        filtered_pseudo_labels = [accepted_pseudo_labels[i] for i in range(len(accepted_pseudo_labels))]
+        filtered_confidence_scores = [accepted_confidence_scores[i] for i in range(len(accepted_confidence_scores))]
+                
+        return filtered_pseudo_labels, filtered_confidence_scores, rejected_indices
     
     def compute_target_counts(self, current_distribution, num_samples, labeled_set_size, available_classes):
         """
@@ -355,6 +475,35 @@ class SSLEntropySampler:
         
         if client_id not in self.client_labeled_sets:
             self.client_labeled_sets[client_id] = []
+
+        # If we have labeled data, visualize it first
+        if labeled_set is not None and len(labeled_set) > 0:
+            print("[SSLEntropy] Visualizing labeled data embeddings...")
+            try:
+                # Create a separate dataloader for visualization
+                vis_labeled_loader = DataLoader(
+                    unlabeled_loader.dataset,
+                    batch_size=unlabeled_loader.batch_size,
+                    sampler=SubsetSequentialSampler(labeled_set),
+                    num_workers=0
+                )
+                
+                # Ensure output directory exists
+                import os
+                output_dir = os.path.abspath('ssl_visualizations')
+                os.makedirs(output_dir, exist_ok=True)
+                
+                # Visualize the labeled data embeddings
+                self.visualize_labeled_embeddings(
+                    model,
+                    vis_labeled_loader,
+                    output_dir=output_dir,
+                    client_id=client_id
+                )
+            except Exception as e:
+                print(f"[ERROR] Failed to visualize labeled data: {str(e)}")
+                import traceback
+                traceback.print_exc()  # This won't interrupt the main algorithm
             
         # Use the labeled set to track previously selected samples
         total_labeled = 0
@@ -409,21 +558,26 @@ class SSLEntropySampler:
         # Step 3: Assign pseudo-labels using class centroids
         pseudo_labels = None
         confidence_scores = None
+        rejected_indices = None
         
         if class_centroids and len(class_centroids.keys()) > 0:
             # Use centroid-based pseudo-labeling
-            print("[SSLEntropy] Assigning pseudo-labels using class centroids")
-            pseudo_labels, confidence_scores = self.assign_pseudo_labels(features, class_centroids)
-            if pseudo_labels is None:
-                print("[SSLEntropy] Failed to assign pseudo-labels, falling back to model predictions")
-                # Fall back to model predictions
-                pseudo_labels, confidence_scores = self._get_model_predictions(model, unlabeled_loader)
+            print("[SSLEntropy] Assigning pseudo-labels using class centroids with thresholds")
+            pseudo_labels, confidence_scores, rejected_indices = self.assign_pseudo_labels(features, class_centroids)
+            if pseudo_labels is None or len(pseudo_labels) == 0:
+                error_msg = "[SSLEntropy] ERROR: Failed to assign any pseudo-labels using class centroids"
+                print(error_msg)
+                raise ValueError(error_msg)
             else:
-                print(f"[SSLEntropy] Successfully assigned centroid-based pseudo-labels to {len(pseudo_labels)} samples")
+                total_samples = len(features)
+                num_rejected = len(rejected_indices) if rejected_indices is not None else 0
+                print(f"[SSLEntropy] Successfully assigned centroid-based pseudo-labels to {len(pseudo_labels)}/{total_samples} samples")
+                print(f"[SSLEntropy] Rejected {num_rejected}/{total_samples} samples that didn't pass thresholds")
         else:
-            # If we don't have centroids, use model predictions
-            print("[SSLEntropy] No class centroids available, using model predictions as pseudo-labels")
-            pseudo_labels, confidence_scores = self._get_model_predictions(model, unlabeled_loader)
+            # If we don't have centroids, raise an error
+            error_msg = "[SSLEntropy] ERROR: No class centroids available for pseudo-labeling"
+            print(error_msg)
+            raise ValueError(error_msg)
             
         # Calculate current distribution from labeled data
         current_distribution = {cls: count/total_labeled for cls, count in labeled_class_counts.items()} if total_labeled > 0 else {i: 0 for i in range(10)}
@@ -431,8 +585,8 @@ class SSLEntropySampler:
         # Step 4: Select samples based on class distribution and confidence
         # Organize samples by pseudo-class
         class_to_samples = {i: [] for i in range(10)}
-        for idx, sample_idx, label, entropy, confidence in zip(range(len(indices)), indices, pseudo_labels, entropy_scores, confidence_scores):
-            class_to_samples[label].append((sample_idx, entropy, confidence))
+        for idx, pl, cs, es in zip(indices, pseudo_labels, confidence_scores, entropy_scores):
+            class_to_samples[pl].append((idx, es, cs))
         
         # Get available classes in the unlabeled pool
         available_classes = set(pseudo_labels)
@@ -501,35 +655,44 @@ class SSLEntropySampler:
         # Select samples from each class
         for cls, count in target_counts.items():
             if count > 0 and cls in class_to_samples and class_to_samples[cls]:
-                # Sort samples by confidence (highest first)
+                # Sort samples by entropy (highest first)
                 samples_in_class = class_to_samples[cls]
-                samples_in_class.sort(key=lambda x: x[2], reverse=True)
+                samples_in_class.sort(key=lambda x: x[1], reverse=True)
                 
-                # Select top confident samples
+                # Select highest entropy samples
                 to_select = min(count, len(samples_in_class))
                 selected_indices = [sample[0] for sample in samples_in_class[:to_select]]
                 selected_samples.extend(selected_indices)
                 
                 # Log selection per class
-                print(f"[SSLEntropy] Selected {to_select} samples from pseudo-class {cls} (highest confidence first)")
+                print(f"[SSLEntropy] Selected {to_select} samples from pseudo-class {cls} (highest entropy first)")
                 
-        # Verify we selected the correct number of samples
-        if len(selected_samples) < num_samples:
-            print(f"[SSLEntropy] Warning: Only selected {len(selected_samples)}/{num_samples} samples")
-            # Select additional samples based on entropy if needed
+        # Add fallback for rejected samples if we can't meet the target
+        if len(selected_samples) < num_samples and rejected_indices is not None and len(rejected_indices) > 0:
+            print(f"[SSLEntropy] Using high-entropy rejected samples as fallback")
             remaining = num_samples - len(selected_samples)
-            if remaining > 0:
-                # Create a list of (index, entropy) for unselected samples
-                unselected = [(idx, entropy_scores[i]) for i, idx in enumerate(indices) 
-                            if idx not in selected_samples]
-                
-                # Sort by entropy (highest first)
-                unselected.sort(key=lambda x: x[1], reverse=True)
-                
-                # Select additional samples
-                additional = [item[0] for item in unselected[:remaining]]
-                selected_samples.extend(additional)
-                print(f"[SSLEntropy] Selected {len(additional)} additional samples based on entropy")
+            
+            # Get the rejected indices with their entropy scores
+            rejected_with_entropy = []
+            for i in rejected_indices:
+                # Convert numpy int64 to regular int for indexing
+                idx = int(i)  
+                if idx < len(indices):
+                    orig_idx = indices[idx]
+                    entropy = entropy_scores[idx]
+                    # Only consider samples that haven't been selected yet
+                    if orig_idx not in selected_samples:
+                        rejected_with_entropy.append((orig_idx, entropy))
+            
+            # Sort by entropy (highest first)
+            rejected_with_entropy.sort(key=lambda x: x[1], reverse=True)
+            
+            # Select additional samples up to the limit
+            to_add = min(remaining, len(rejected_with_entropy))
+            if to_add > 0:
+                fallback_samples = [x[0] for x in rejected_with_entropy[:to_add]]
+                selected_samples.extend(fallback_samples)
+                print(f"[SSLEntropy] Added {to_add} high-entropy rejected samples as fallback")
         
         # Calculate remaining unlabeled samples
         remaining_unlabeled = [idx for idx in unlabeled_set if idx not in selected_samples]
@@ -539,20 +702,374 @@ class SSLEntropySampler:
         
         # Add detailed class summary to final selection report
         selected_class_counts = {}
+        
+        # Map selected samples to their pseudo-classes
+        mapped_count = 0
         for idx in selected_samples:
-            if idx in indices:
-                selected_class = pseudo_labels[indices.index(idx)]
-                selected_class_counts[selected_class] = selected_class_counts.get(selected_class, 0) + 1
-                
-        print(f"[SSLEntropy] Final selection by pseudo-class:")
-        for cls in sorted(selected_class_counts.keys()):
-            count = selected_class_counts[cls]
-            percentage = count / len(selected_samples) * 100
-            print(f"  Pseudo-class {cls}: {count} samples ({percentage:.1f}%)")
+            found = False
+            # Look through our samples with pseudo-labels
+            for i, orig_idx in enumerate(indices):
+                if orig_idx == idx and i < len(pseudo_labels):
+                    pseudo_class = pseudo_labels[i]
+                    selected_class_counts[pseudo_class] = selected_class_counts.get(pseudo_class, 0) + 1
+                    found = True
+                    mapped_count += 1
+                    break
+                    
+        print(f"[SSLEntropy] Mapped {mapped_count}/{len(selected_samples)} selected samples to pseudo-classes")
+        
+        if mapped_count > 0:
+            print(f"[SSLEntropy] Final selection by pseudo-class:")
+            for cls in sorted(selected_class_counts.keys()):
+                count = selected_class_counts[cls]
+                percentage = count / mapped_count * 100
+                print(f"  Pseudo-class {cls}: {count} samples ({percentage:.1f}%)")
         
         print(f"[SSLEntropy] Final selection: {len(selected_samples)} samples across {len(selected_class_counts)} classes")
         
         return selected_samples, remaining_unlabeled
+        
+    def visualize_labeled_embeddings(self, model, labeled_loader, output_dir='labeled_embeddings', client_id=None):
+        """
+        Visualize embeddings of labeled data using t-SNE
+        
+        Args:
+            model: Current model
+            labeled_loader: DataLoader containing labeled samples
+            output_dir: Directory to save visualizations
+            client_id: Client ID for naming files
+        """
+        print(f"[DEBUG] Starting visualization for client {client_id} with {len(labeled_loader.sampler)} labeled samples")
+        
+        try:
+            import matplotlib
+            # Force non-interactive backend for headless environments
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            from sklearn.manifold import TSNE
+            import os
+            
+            # Create full output directory path with all parents
+            output_dir = os.path.abspath(f'{output_dir}/client_{client_id}')
+            os.makedirs(output_dir, exist_ok=True)
+            print(f"[DEBUG] Will save visualization to: {output_dir}")
+            
+            print("[SSLEntropy] Extracting features from labeled data for visualization...")
+            
+            # Extract features and labels
+            features = []
+            labels = []
+            
+            model.eval()
+            self.ssl_model.eval()
+            
+            labeled_count = 0
+            with torch.no_grad():
+                for inputs, targets in labeled_loader:
+                    labeled_count += len(inputs)
+                    inputs = inputs.to(self.device)
+                    
+                    # Extract features using SSL model
+                    batch_features = self.ssl_model.get_features(inputs)
+                    batch_features = batch_features.cpu().numpy()
+                    
+                    # Apply L2 normalization
+                    for i in range(len(batch_features)):
+                        batch_features[i] = batch_features[i] / np.linalg.norm(batch_features[i])
+                    
+                    features.append(batch_features)
+                    labels.extend(targets.numpy())
+            
+            print(f"[DEBUG] Processed {labeled_count} labeled samples")
+            
+            # Stack features and convert labels to numpy array
+            features = np.vstack(features) if features else np.array([])
+            labels = np.array(labels)
+            
+            if len(features) == 0:
+                print("[SSLEntropy] Warning: No labeled data to visualize")
+                return
+            
+            print(f"[DEBUG] Feature shape: {features.shape}, Labels shape: {labels.shape}")
+                
+            # Apply t-SNE with adjusted perplexity and a random seed based on client_id
+            print(f"[SSLEntropy] Running t-SNE on {len(features)} labeled samples...")
+            perplexity = min(30, max(5, len(features) - 1))  # Ensure valid perplexity
+            print(f"[DEBUG] Using perplexity={perplexity} for t-SNE")
+            
+            # Use a dynamic seed based on checkpoint and client_id to ensure different visualizations
+            import hashlib
+            checkpoint_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'SSL_checkpoints', 'final_checkpoint.pt')
+            checkpoint_modified_time = os.path.getmtime(checkpoint_path) if os.path.exists(checkpoint_path) else 0
+            random_seed = (int(checkpoint_modified_time * 1000) + (client_id or 0) * 100) % 10000
+            print(f"[DEBUG] Using dynamic random_state={random_seed} for t-SNE based on checkpoint modification time")
+            
+            tsne = TSNE(n_components=2, random_state=random_seed, perplexity=perplexity)
+            features_2d = tsne.fit_transform(features)
+            
+            # Create scatter plot
+            plt.figure(figsize=(12, 10))
+            
+            # Define a color map
+            colors = plt.cm.tab10.colors
+            
+            # Plot each class with a different color
+            for class_idx in sorted(set(labels)):
+                mask = labels == class_idx
+                if np.any(mask):  # Only plot if we have samples for this class
+                    plt.scatter(
+                        features_2d[mask, 0],
+                        features_2d[mask, 1],
+                        c=[colors[int(class_idx) % len(colors)]],
+                        s=50,
+                        alpha=0.7,
+                        label=f"Class {class_idx}"
+                    )
+            
+            plt.title("SSL Encoder Embeddings of Labeled Data", fontsize=16)
+            plt.xlabel("t-SNE Component 1", fontsize=14)
+            plt.ylabel("t-SNE Component 2", fontsize=14)
+            plt.legend(fontsize=12)
+            
+            # Save the plot
+            plt.tight_layout()
+            client_str = f"_client{client_id}" if client_id is not None else ""
+            filename = os.path.join(output_dir, f"labeled_embeddings{client_str}.png")
+            plt.savefig(filename, dpi=300)
+            plt.close()
+            
+            print(f"[SSLEntropy] Visualization saved to {filename}")
+            
+            # Analyze cluster quality if we have multiple classes
+            if len(set(labels)) > 1:
+                self.analyze_cluster_quality(features_2d, labels, output_dir, client_id)
+            
+            print(f"[DEBUG] Visualization completed successfully")
+                
+        except ImportError as e:
+            print(f"[SSLEntropy] Warning: Could not create visualization due to missing dependencies: {e}")
+            print("[SSLEntropy] Please install matplotlib and scikit-learn to enable visualizations")
+        except Exception as e:
+            print(f"[ERROR] Visualization failed: {str(e)}")
+            import traceback
+            traceback.print_exc()  # Print full error stack
+    
+    def analyze_cluster_quality(self, features_2d, labels, output_dir='labeled_embeddings', client_id=None):
+        """
+        Analyze the quality of clusters in the t-SNE visualization
+        
+        Args:
+            features_2d: 2D features from t-SNE
+            labels: True labels
+            output_dir: Directory to save results
+            client_id: Client ID for naming files
+        """
+        print(f"[DEBUG] Analyzing cluster quality for {len(features_2d)} samples with {len(set(labels))} classes")
+        try:
+            from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
+            import os
+            
+            metrics = {}
+            
+            # Silhouette score (higher is better, range: -1 to 1)
+            metrics['silhouette'] = silhouette_score(features_2d, labels)
+            
+            # Davies-Bouldin index (lower is better)
+            metrics['davies_bouldin'] = davies_bouldin_score(features_2d, labels)
+            
+            # Calinski-Harabasz index (higher is better)
+            metrics['calinski_harabasz'] = calinski_harabasz_score(features_2d, labels)
+            
+            print("[SSLEntropy] Cluster quality metrics:")
+            print(f"  Silhouette Score: {metrics['silhouette']:.4f} (higher is better)")
+            print(f"  Davies-Bouldin Index: {metrics['davies_bouldin']:.4f} (lower is better)")
+            print(f"  Calinski-Harabasz Index: {metrics['calinski_harabasz']:.4f} (higher is better)")
+            
+            # Save metrics to file
+            client_str = f"_client{client_id}" if client_id is not None else ""
+            filename = os.path.join(output_dir, f"cluster_metrics{client_str}.txt")
+            
+            # Ensure output directory exists
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            
+            with open(filename, 'w') as f:
+                f.write("Cluster quality metrics:\n")
+                f.write(f"Silhouette Score: {metrics['silhouette']:.4f} (higher is better)\n")
+                f.write(f"Davies-Bouldin Index: {metrics['davies_bouldin']:.4f} (lower is better)\n")
+                f.write(f"Calinski-Harabasz Index: {metrics['calinski_harabasz']:.4f} (higher is better)\n")
+            
+            print(f"[SSLEntropy] Metrics saved to {filename}")
+            print(f"[DEBUG] Cluster quality analysis completed successfully")
+            
+            return metrics
+        
+        except ImportError as e:
+            print(f"[SSLEntropy] Warning: Could not analyze cluster quality due to missing dependencies: {e}")
+            return None
+        except Exception as e:
+            print(f"[ERROR] Cluster quality analysis failed: {str(e)}")
+            import traceback
+            traceback.print_exc()  # Print full error stack
+            return None
+            
+    def analyze_client_labeled_data(self, model, dataset, client_indices, client_id=0, labeled_fraction=0.1, output_dir='labeled_embeddings'):
+        """
+        Analyze a client's labeled data by creating visualizations of embeddings and cluster quality
+        
+        Args:
+            model: Current model
+            dataset: Dataset containing the samples
+            client_indices: List of indices that belong to this client
+            client_id: ID of the client for naming files
+            labeled_fraction: Fraction of client's data to use as labeled (default: 10%)
+            output_dir: Directory to save visualizations
+        """
+        import numpy as np
+        from torch.utils.data import DataLoader
+        import os
+        
+        print(f"\n[SSLEntropy] Analyzing client {client_id}'s labeled data...")
+        
+        # Create output directory
+        client_dir = os.path.join(output_dir, f"client_{client_id}")
+        os.makedirs(client_dir, exist_ok=True)
+        
+        # Sample labeled_fraction of the client's data
+        labeled_size = int(labeled_fraction * len(client_indices))
+        # Use a fixed seed for reproducibility
+        np.random.seed(client_id + 42)
+        labeled_indices = np.random.choice(client_indices, labeled_size, replace=False).tolist()
+        
+        print(f"[SSLEntropy] Client {client_id} has {len(client_indices)} total samples")
+        print(f"[SSLEntropy] Using {len(labeled_indices)} samples ({labeled_fraction*100:.1f}%) as labeled data")
+        
+        # Create dataloader for labeled data
+        labeled_loader = DataLoader(
+            dataset,
+            batch_size=64,
+            sampler=SubsetSequentialSampler(labeled_indices),
+            num_workers=2
+        )
+        
+        # Visualize labeled embeddings
+        self.visualize_labeled_embeddings(
+            model, 
+            labeled_loader, 
+            output_dir=client_dir,
+            client_id=client_id
+        )
+        
+        # Calculate and save class distribution statistics
+        try:
+            # Get class labels
+            client_labels = np.array([dataset[i][1] for i in client_indices])
+            labeled_labels = np.array([dataset[i][1] for i in labeled_indices])
+            num_classes = max(10, len(np.unique(client_labels)))
+            
+            # Calculate distributions
+            full_dist = np.bincount(client_labels, minlength=num_classes) / len(client_labels)
+            labeled_dist = np.bincount(labeled_labels, minlength=num_classes) / len(labeled_labels)
+            
+            # Save to file
+            with open(os.path.join(client_dir, f"distribution_stats_client{client_id}.txt"), 'w') as f:
+                f.write(f"Client {client_id} Data Distribution Statistics:\n\n")
+                
+                f.write("Full client data distribution:\n")
+                for cls in range(num_classes):
+                    if np.sum(client_labels == cls) > 0 or np.sum(labeled_labels == cls) > 0:
+                        f.write(f"  Class {cls}: {np.sum(client_labels == cls)} samples ({full_dist[cls]*100:.1f}%)\n")
+                    
+                f.write("\nLabeled data distribution:\n")
+                for cls in range(num_classes):
+                    if np.sum(labeled_labels == cls) > 0:
+                        f.write(f"  Class {cls}: {np.sum(labeled_labels == cls)} samples ({labeled_dist[cls]*100:.1f}%)\n")
+                        
+            print(f"[SSLEntropy] Distribution statistics saved to {os.path.join(client_dir, f'distribution_stats_client{client_id}.txt')}")
+            
+            # Print distribution summary
+            print("[SSLEntropy] Classes represented in labeled data:")
+            classes_with_samples = []
+            for cls in range(num_classes):
+                if np.sum(labeled_labels == cls) > 0:
+                    count = np.sum(labeled_labels == cls)
+                    percentage = count / len(labeled_labels) * 100
+                    classes_with_samples.append(cls)
+                    print(f"  Class {cls}: {count} samples ({percentage:.1f}%)")
+                    
+            print(f"[SSLEntropy] Client {client_id} has {len(classes_with_samples)}/{num_classes} classes in labeled data")
+            
+        except Exception as e:
+            print(f"[SSLEntropy] Warning: Could not calculate distribution statistics: {e}")
+        
+        return labeled_indices
+            
+    def dirichlet_partition_data(self, dataset, num_clients=5, alpha=0.5, num_classes=10, seed=42):
+        """
+        Partition data using Dirichlet distribution to create non-IID data splits
+        
+        Args:
+            dataset: Dataset to partition
+            num_clients: Number of clients to create partitions for
+            alpha: Dirichlet concentration parameter (lower = more non-IID)
+            num_classes: Number of classes in the dataset
+            seed: Random seed for reproducibility
+            
+        Returns:
+            Dict mapping client_id to list of indices for that client
+        """
+        import numpy as np
+        
+        np.random.seed(seed)
+        
+        # Get labels for entire dataset
+        labels = np.array([dataset[i][1] for i in range(len(dataset))])
+        
+        # Initialize client indices dict
+        client_indices = {i: [] for i in range(num_clients)}
+        
+        # For each class, distribute samples among clients according to Dirichlet distribution
+        for cls in range(num_classes):
+            # Get indices of samples from this class
+            class_indices = np.where(labels == cls)[0]
+            
+            # Sample Dirichlet distribution for this class
+            proportions = np.random.dirichlet(np.repeat(alpha, num_clients))
+            
+            # Calculate number of samples per client for this class
+            # Ensure we distribute all samples
+            num_samples_per_client = np.floor(proportions * len(class_indices)).astype(int)
+            remainder = len(class_indices) - np.sum(num_samples_per_client)
+            
+            # Add remainder to clients with highest proportions
+            if remainder > 0:
+                sorted_proportions = np.argsort(proportions)[::-1]
+                for i in range(remainder):
+                    num_samples_per_client[sorted_proportions[i]] += 1
+                    
+            # Assign samples to clients
+            class_indices_permuted = np.random.permutation(class_indices)
+            start_idx = 0
+            for client_id, num_samples in enumerate(num_samples_per_client):
+                client_indices[client_id].extend(
+                    class_indices_permuted[start_idx:start_idx + num_samples].tolist()
+                )
+                start_idx += num_samples
+        
+        # Shuffle indices for each client
+        for client_id in client_indices.keys():
+            np.random.shuffle(client_indices[client_id])
+        
+        # Print distribution statistics
+        print("\n[SSLEntropy] Dirichlet partition statistics:")
+        print(f"[SSLEntropy] Alpha: {alpha} (lower = more non-IID)")
+        
+        for client_id in range(num_clients):
+            client_labels = labels[client_indices[client_id]]
+            dist = np.bincount(client_labels, minlength=num_classes) / len(client_labels)
+            print(f"[SSLEntropy] Client {client_id}: {len(client_indices[client_id])} samples")
+            print(f"[SSLEntropy]   Class distribution: {dist}")
+            
+        return client_indices
         
     def _get_model_predictions(self, model, data_loader):
         """
@@ -567,20 +1084,54 @@ class SSLEntropySampler:
         """
         model_device = next(model.parameters()).device
         
-        all_probs = []
-        model.eval()
+    def analyze_federated_data(self, dataset, model, num_clients=5, alpha=0.5, client_ids=None, labeled_fraction=0.1, output_dir='ssl_embeddings'):
+        """
+        Comprehensive analysis of federated data with Dirichlet partitioning
         
-        with torch.no_grad():
-            for inputs, _ in data_loader:
-                inputs = inputs.to(model_device)
-                outputs = model(inputs)
-                if isinstance(outputs, tuple):
-                    outputs = outputs[0]
-                probs = F.softmax(outputs, dim=1)
-                all_probs.append(probs.cpu().numpy())
+        Args:
+            dataset: Dataset to analyze
+            model: Current model
+            num_clients: Total number of clients
+            alpha: Dirichlet concentration parameter
+            client_ids: List of specific client IDs to analyze (default: all clients)
+            labeled_fraction: Fraction of each client's data to use as labeled
+            output_dir: Base directory for saving visualizations
+            
+        Returns:
+            Dict mapping client_id to labeled indices
+        """
+        # Create directory for results
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Partition data using Dirichlet distribution
+        client_indices = self.dirichlet_partition_data(
+            dataset, 
+            num_clients=num_clients, 
+            alpha=alpha
+        )
+        
+        # If no client_ids specified, analyze all clients
+        if client_ids is None:
+            client_ids = list(client_indices.keys())
+        
+        # Analyze each client's labeled data
+        labeled_indices_by_client = {}
+        for client_id in client_ids:
+            if client_id not in client_indices:
+                print(f"[SSLEntropy] Warning: Client {client_id} not found in partition, skipping")
+                continue
                 
-        all_probs = np.vstack(all_probs)
-        pseudo_labels = np.argmax(all_probs, axis=1)
-        confidence_scores = np.max(all_probs, axis=1)
-        
-        return pseudo_labels, confidence_scores
+            print(f"\n[SSLEntropy] Analyzing client {client_id}...")
+            labeled_indices = self.analyze_client_labeled_data(
+                model,
+                dataset,
+                client_indices[client_id],
+                client_id=client_id,
+                labeled_fraction=labeled_fraction,
+                output_dir=output_dir
+            )
+            
+            labeled_indices_by_client[client_id] = labeled_indices
+            
+        return labeled_indices_by_client

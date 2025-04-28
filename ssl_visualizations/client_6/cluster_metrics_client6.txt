@@ -1,0 +1,4 @@
+Cluster quality metrics:
+Silhouette Score: -0.0169 (higher is better)
+Davies-Bouldin Index: 11.0713 (lower is better)
+Calinski-Harabasz Index: 7.5844 (higher is better)
