@@ -11,6 +11,97 @@ import torch.nn.functional as F
 from torch.distributions import Beta
 
 
+def tuned_contrastive_loss(features, labels, temperature=0.5, lambda_weight=1.0, 
+                          hard_mining_ratio=0.5, adaptive_temp=True):
+    """
+    Computes the Tuned Contrastive Loss (TCL) with adaptive temperature and hard negative mining.
+    
+    Args:
+        features (torch.Tensor): Feature vectors from the model [batch_size, feature_dim]
+        labels (torch.Tensor): Ground truth labels [batch_size]
+        temperature (float): Base temperature parameter for scaling similarities
+        lambda_weight (float): Weight for TCL when combined with cross-entropy
+        hard_mining_ratio (float): Ratio of hard negatives to prioritize
+        adaptive_temp (bool): Whether to use adaptive temperature
+        
+    Returns:
+        torch.Tensor: Computed TCL loss
+    """
+    # Handle case where features is a list (from some model architectures)
+    if isinstance(features, list):
+        features = features[-1]  # Use the last layer features
+        
+    batch_size = features.size(0)
+    device = features.device
+    
+    # Normalize features (use L2 normalization)
+    normalized_features = F.normalize(features, p=2, dim=1)
+    
+    # Compute similarity matrix
+    similarity_matrix = torch.matmul(normalized_features, normalized_features.T)
+    
+    # Create masks for positive and negative pairs
+    labels_matrix = labels.unsqueeze(1) == labels.unsqueeze(0)
+    positive_mask = labels_matrix.float() - torch.eye(batch_size, device=device)
+    negative_mask = (~labels_matrix).float()
+    
+    # Adaptive temperature based on feature similarity (optional)
+    temp = temperature
+    if adaptive_temp:
+        # Compute average similarity of positive pairs for each anchor
+        pos_sim = (similarity_matrix * positive_mask).sum(1) / (positive_mask.sum(1) + 1e-8)
+        # Adjust temperature: harder positives (lower similarity) get lower temperature
+        temp = temperature * (1.0 - 0.5 * (1.0 - pos_sim))
+        temp = temp.unsqueeze(1)  # Shape for broadcasting
+    
+    # Scale similarity scores
+    exp_sim = torch.exp(similarity_matrix / temp)
+    
+    # Hard negative mining
+    if hard_mining_ratio < 1.0:
+        # For each anchor, find the hardest negatives (highest similarity)
+        neg_sim = similarity_matrix * negative_mask
+        neg_sim[negative_mask == 0] = float('-inf')  # Mask out positives
+        
+        # Get indices of top k% hardest negatives
+        num_hard_negatives = max(1, int(negative_mask.sum(1).min().item() * hard_mining_ratio))
+        _, hard_indices = torch.topk(neg_sim, k=num_hard_negatives, dim=1)
+        
+        # Create mask for hard negatives
+        hard_negative_mask = torch.zeros_like(negative_mask)
+        for i in range(batch_size):
+            hard_negative_mask[i, hard_indices[i]] = 1.0
+        
+        # Apply hard negative mask
+        negative_mask = hard_negative_mask
+    
+    # Compute contrastive loss
+    pos_exp_sum = (exp_sim * positive_mask).sum(1, keepdim=True)
+    neg_exp_sum = (exp_sim * negative_mask).sum(1, keepdim=True)
+    
+    # Handle cases with no positives
+    denominator = pos_exp_sum + neg_exp_sum
+    
+    # Add epsilon for numerical stability
+    epsilon = 1e-12
+    loss = -torch.log((pos_exp_sum + epsilon) / (denominator + epsilon))
+    
+    # Check for any numerical issues
+    if torch.isnan(loss).any() or torch.isinf(loss).any():
+        print("[WARNING] NaN or Inf detected in contrastive loss")
+        # Return a zero loss if there are numerical issues to avoid breaking training
+        return torch.tensor(0.0, device=device)
+    
+    # Average loss over all samples with positives
+    valid_samples = (positive_mask.sum(1) > 0).float()
+    if valid_samples.sum() > 0:
+        loss = (loss * valid_samples).sum() / (valid_samples.sum() + 1e-8)
+    else:
+        loss = torch.tensor(0.0, device=device)
+    
+    return loss * lambda_weight
+
+
 class FederatedTrainer:
     """
     Manages the federated learning training process with various
@@ -73,6 +164,15 @@ class FederatedTrainer:
                     self._train_epoch_client_vanilla(
                         selected_clients_id, models, criterion, 
                         optimizers, dataloaders, trial_seed + epoch
+                    )
+                elif self.config.LOCAL_MODEL_UPDATE == "ContrastiveEntropy":
+                    self._train_epoch_client_contrastive_entropy(
+                        selected_clients_id, models, criterion, 
+                        optimizers, dataloaders, trial_seed + epoch,
+                        tcl_temp=self.config.TCL_TEMPERATURE, 
+                        tcl_lambda=self.config.TCL_LAMBDA,
+                        tcl_hard_ratio=self.config.TCL_HARD_MINING_RATIO, 
+                        tcl_adaptive_temp=self.config.TCL_ADAPTIVE_TEMP
                     )
                 else:  # KCFU
                     self._train_epoch_client_distil(
@@ -155,6 +255,88 @@ class FederatedTrainer:
                 # Log occasionally
                 if (self.iters % 1000 == 0):
                     print(f'Client {c} | Batch {batch_idx} | Loss: {loss.item():.4f}')
+                    
+    def _train_epoch_client_contrastive_entropy(self, selected_clients_id, models, criterion, 
+                                               optimizers, dataloaders, trial_seed,
+                                               tcl_temp=0.5, tcl_lambda=1.0,
+                                               tcl_hard_ratio=0.5, tcl_adaptive_temp=True):
+        """
+        Train client models using vanilla federated learning with both cross-entropy and TCL.
+        
+        Args:
+            selected_clients_id (list): IDs of selected clients for this round
+            models (dict): Dictionary of models
+            criterion (nn.Module): Loss function
+            optimizers (dict): Dictionary of optimizers
+            dataloaders (dict): Dictionary of dataloaders
+            trial_seed (int): Seed for reproducibility
+            tcl_temp (float): Temperature parameter for TCL
+            tcl_lambda (float): Weight for TCL when combined with cross-entropy
+            tcl_hard_ratio (float): Ratio of hard negatives to prioritize
+            tcl_adaptive_temp (bool): Whether to use adaptive temperature
+        """
+        for c in selected_clients_id:
+            # Set deterministic behavior for this client
+            client_seed = (trial_seed * 100 + c * 10) % (2**31 - 1)
+            torch.manual_seed(client_seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed(client_seed)
+
+            model = models['clients'][c]
+            model.train()
+            
+            for batch_idx, data in enumerate(dataloaders['train-private'][c]):
+                # Use a batch-specific seed for reproducibility
+                batch_seed = client_seed + batch_idx
+                torch.manual_seed(batch_seed)
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed(batch_seed)
+                
+                inputs = data[0].to(self.device)
+                labels = data[1].to(self.device)
+
+                # Forward pass
+                scores, features = model(inputs)
+                
+                # Make sure features is a tensor, not a list
+                if isinstance(features, list):
+                    features = features[-1]  # Use the last layer features if it's a list
+                
+                # Standard cross-entropy loss
+                ce_loss = torch.sum(criterion(scores, labels)) / labels.size(0)
+                
+                # Tuned contrastive loss
+                tcl_loss = tuned_contrastive_loss(
+                    features, labels, 
+                    temperature=tcl_temp, 
+                    lambda_weight=tcl_lambda,
+                    hard_mining_ratio=tcl_hard_ratio, 
+                    adaptive_temp=tcl_adaptive_temp
+                )
+                
+                # Combined loss
+                loss = ce_loss + tcl_loss
+                
+                # Debug printout
+                if batch_idx % 100 == 0:
+                    with torch.no_grad():
+                        _, pred = torch.max(scores, 1)
+                        correct = (pred == labels).sum().item()
+                        accuracy = 100 * correct / labels.size(0)
+                        print(f"[Debug] Client {c} | Batch {batch_idx} | CE Loss: {ce_loss.item():.4f} | "
+                              f"TCL Loss: {tcl_loss.item():.4f} | Total Loss: {loss.item():.4f} | "
+                              f"Batch Accuracy: {accuracy:.2f}%")
+                
+                # Backward and optimize
+                self.iters += 1
+                optimizers['clients'][c].zero_grad()
+                loss.backward()
+                optimizers['clients'][c].step()
+                
+                # Log occasionally
+                if (self.iters % 1000 == 0):
+                    print(f'Client {c} | Batch {batch_idx} | CE Loss: {ce_loss.item():.4f} | '
+                          f'TCL Loss: {tcl_loss.item():.4f} | Total Loss: {loss.item():.4f}')
     
     def _train_epoch_client_distil(self, selected_clients_id, models, criterion, 
                                   optimizers, dataloaders, comm, trial_seed):

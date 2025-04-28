@@ -16,8 +16,9 @@ DATA_ROOT = 'data/cifar-10-batches-py'
 # - "CoreSet"
 # - "CoreSetGlobalOptimal"
 # - "SSLEntropy"
+# - "PseudoEntropy"
 
-ACTIVE_LEARNING_STRATEGY = "SSLEntropy"
+ACTIVE_LEARNING_STRATEGY = "PseudoEntropy"
 
 # random seed
 SEED = 44
@@ -35,8 +36,14 @@ CYCLES=2
 RATIO=0.8
 CLIENTS=10
 TRIALS=1
-LOCAL_MODEL_UPDATE = "Vanilla" # Options are "Vanilla" and "KFCU"  
+LOCAL_MODEL_UPDATE = "ContrastiveEntropy" # Options are "Vanilla", "ContrastiveEntropy", and "KFCU"  
 DATATSET = "CIFAR10" # Options are "CIFAR10" and "SVHN"
+
+# TCL settings
+TCL_TEMPERATURE = 0.5
+TCL_LAMBDA = 0.5  # Reduced from 1.0 to a much smaller value
+TCL_HARD_MINING_RATIO = 0.5
+TCL_ADAPTIVE_TEMP = True
 
 # SSL settings
 # These parameters control the federated SSL autoencoder step
