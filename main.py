@@ -45,6 +45,13 @@ def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Federated Active Learning')
     parser.add_argument('--strategy', type=str, help='Active learning strategy to use')
+    parser.add_argument('--confidence', type=float, default=0.0, help='Confidence threshold for PseudoEntropy (default: 0.0)')
+    parser.add_argument('--cycles', type=int, help='Number of active learning cycles')
+    parser.add_argument('--clients', type=int, help='Number of federated clients')
+    parser.add_argument('--alpha', type=float, help='Dirichlet partition non-IID level')
+    parser.add_argument('--budget', type=int, help='Active learning budget per cycle')
+    parser.add_argument('--base', type=int, help='Initial labeled set size')
+    parser.add_argument('--seed', type=int, help='Random seed')
     return parser.parse_args()
 
 
@@ -93,12 +100,69 @@ def create_test_loader(dataset, trial_seed, batch_size=BATCH):
     return test_loader
 
 
+# +++++++++++++++++ NEW FUNCTION ADDED +++++++++++++++++
+def save_initial_labeled_indices(labeled_set_list, total_data_num, trial_seed, alpha, clients, id2lab):
+    """Save the initial labeled indices to a JSON file."""
+    # Create a dictionary to store the labeled indices
+    labeled_indices_data = {
+        "metadata": {
+            "description": "Initial labeled indices (first ~10% samples)",
+            "seed": trial_seed,
+            "alpha": alpha,
+            "num_clients": len(labeled_set_list),
+            "total_samples_per_client": total_data_num.tolist()
+        },
+        "labeled_indices": {},
+        "labeled_classes": {}  # Also save the class labels for each index
+    }
+    
+    # Add each client's labeled indices and their corresponding classes
+    for c in range(clients):
+        labeled_indices_data["labeled_indices"][str(c)] = labeled_set_list[c]
+        labeled_indices_data["labeled_classes"][str(c)] = [int(id2lab[idx]) for idx in labeled_set_list[c]]
+    
+    # Save to JSON file
+    file_name = f"selected_cifar10_samples_alpha{alpha}_clients{clients}_seed{trial_seed}.json"
+    with open(file_name, 'w') as f:
+        json.dump(labeled_indices_data, f, indent=2)
+    
+    print(f"Initial labeled indices saved to {file_name}")
+# +++++++++++++++++ END OF NEW FUNCTION +++++++++++++++++
+
+
 def main():
     """Main function to run federated active learning experiments."""
     # Parse arguments
     args = parse_arguments()
+    
+    # Override configuration with command line arguments
     if args.strategy:
         config.ACTIVE_LEARNING_STRATEGY = args.strategy
+        print(f"Using strategy: {config.ACTIVE_LEARNING_STRATEGY}")
+    
+    if args.cycles:
+        config.CYCLES = args.cycles
+        print(f"Setting cycles to: {config.CYCLES}")
+    
+    if args.clients:
+        config.CLIENTS = args.clients
+        print(f"Setting number of clients to: {config.CLIENTS}")
+    
+    if args.alpha is not None:
+        config.ALPHA = args.alpha
+        print(f"Setting Dirichlet alpha to: {config.ALPHA}")
+    
+    if args.budget:
+        config.BUDGET = args.budget
+        print(f"Setting budget to: {config.BUDGET}")
+    
+    if args.base:
+        config.BASE = args.base
+        print(f"Setting base size to: {config.BASE}")
+    
+    if args.seed:
+        config.SEED = args.seed
+        print(f"Setting random seed to: {config.SEED}")
     
     # Log configuration
     log_config(config)
@@ -244,6 +308,11 @@ def main():
             client_models.append(copy.deepcopy(resnet8).to(device))
         
         data_num = np.array(data_num)
+
+        # +++++++++++++++++ NEW CODE ADDED +++++++++++++++++
+        # Save the initial labeled indices to a JSON file
+        save_initial_labeled_indices(labeled_set_list, total_data_num, trial_seed, ALPHA, CLIENTS, id2lab)
+        # +++++++++++++++++ END OF NEW CODE +++++++++++++++++
         
         # Log initial data distributions
         for c in range(CLIENTS):
@@ -251,11 +320,18 @@ def main():
             logger.log_sample_classes(0, initial_class_labels, c)
         
         # Initialize strategy manager
-        strategy_manager = StrategyManager(
-            strategy_name=ACTIVE_LEARNING_STRATEGY,
-            loss_weight_list=loss_weight_list,
-            device=device
-        )
+        strategy_params = {
+            'strategy_name': ACTIVE_LEARNING_STRATEGY,
+            'loss_weight_list': loss_weight_list,
+            'device': device
+        }
+        
+        # Add confidence threshold for PseudoEntropy if specified
+        if ACTIVE_LEARNING_STRATEGY == "PseudoEntropy" and args.confidence is not None:
+            strategy_params['confidence_threshold'] = args.confidence
+            print(f"Setting PseudoEntropy confidence threshold to: {args.confidence}")
+        
+        strategy_manager = StrategyManager(**strategy_params)
         
         # If using strategies that need labeled set list or total clients
         if ACTIVE_LEARNING_STRATEGY in ["GlobalOptimal", "CoreSetGlobalOptimal", "CoreSet", "SSLEntropy"]:
