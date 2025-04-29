@@ -17,6 +17,7 @@ DATA_ROOT = 'data/cifar-10-batches-py'
 # - "CoreSetGlobalOptimal"
 # - "SSLEntropy"
 # - "PseudoEntropy"
+# - "PseudoConfidence"
 
 ACTIVE_LEARNING_STRATEGY = "PseudoEntropy"
 
