@@ -56,9 +56,7 @@ def parse_arguments():
     parser.add_argument('--base', type=int, help='Initial labeled set size')
     parser.add_argument('--seed', type=int, help='Random seed')
     parser.add_argument('--max-rounds', type=int, help='Maximum communication rounds per cycle')
-    parser.add_argument('--early-stopping', action='store_true', help='Enable early stopping for convergence detection')
-    parser.add_argument('--patience', type=int, default=3, help='Early stopping patience (default: 3)')
-    parser.add_argument('--check-convergence', action='store_true', help='Check for model convergence before AL starts')
+    parser.add_argument('--check-convergence', action='store_true', help='Monitor convergence before AL starts')
     return parser.parse_args()
 
 
@@ -197,12 +195,10 @@ def main():
     
     # Early stopping settings
     max_rounds = args.max_rounds if args.max_rounds else config.COMMUNICATION
-    early_stopping = args.early_stopping
     check_convergence = args.check_convergence
-    patience = args.patience
     
-    if early_stopping or check_convergence:
-        print(f"Early stopping enabled with patience={patience}")
+    if check_convergence:
+        print(f"Convergence monitoring enabled")
     if max_rounds != config.COMMUNICATION:
         print(f"Setting maximum communication rounds to: {max_rounds}")
     
@@ -427,12 +423,11 @@ def main():
             
             # Train with convergence monitoring if requested
             if cycle == 0 and check_convergence:
-                print("\n===== Checking for model convergence before active learning =====\n")
-                # Run with early stopping for first cycle to check convergence
+                print("\n===== Monitoring model convergence before active learning =====\n")
+                # Run with convergence monitoring for first cycle
                 train_stats = trainer.train(
                     models, criterion, optimizers, schedulers, dataloaders, config.EPOCH, trial_seed,
-                    val_loader=dataloaders['val'], max_rounds=max_rounds, 
-                    early_stopping=True, patience=patience
+                    val_loader=dataloaders['val'], max_rounds=max_rounds
                 )
                 
                 # Plot convergence
@@ -448,9 +443,17 @@ def main():
                     
                     # Print convergence summary
                     print("\n===== Convergence Summary =====")
-                    print(f"Rounds completed: {train_stats['rounds_completed']}")
+                    print(f"Rounds completed: {train_stats['rounds_completed']}/{max_rounds}")
                     print(f"Best validation accuracy: {train_stats['best_val_accuracy']:.2f}%")
-                    print(f"Converged: {'Yes' if train_stats['converged'] else 'No - reached max rounds'}")
+                    
+                    # Check if convergence appears to be reached
+                    if len(train_stats['val_accuracies']) > 2:
+                        last_3_accs = train_stats['val_accuracies'][-3:]
+                        acc_diff = max(last_3_accs) - min(last_3_accs)
+                        if acc_diff < 0.5:  # Less than 0.5% change in last 3 rounds
+                            print(f"Convergence appears stable (accuracy change < 0.5% in last 3 rounds)")
+                        else:
+                            print(f"Convergence may not be stable yet (accuracy change of {acc_diff:.2f}% in last 3 rounds)")
                     print("=============================\n")
             else:
                 # Regular training for subsequent cycles

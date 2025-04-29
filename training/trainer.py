@@ -186,7 +186,7 @@ class FederatedTrainer:
         self.logger = logger
         self.iters = 0  # Training iteration counter
     
-    def train(self, models, criterion, optimizers, schedulers, dataloaders, num_epochs, trial_seed, val_loader=None, max_rounds=None, early_stopping=False, patience=3, min_delta=0.5):
+    def train(self, models, criterion, optimizers, schedulers, dataloaders, num_epochs, trial_seed, val_loader=None, max_rounds=None):
         """
         Main training loop for federated learning.
         
@@ -200,9 +200,6 @@ class FederatedTrainer:
             trial_seed (int): Random seed for this trial
             val_loader (DataLoader, optional): Validation dataloader for convergence monitoring
             max_rounds (int, optional): Maximum communication rounds (overrides config.COMMUNICATION)
-            early_stopping (bool): Whether to use early stopping for convergence detection
-            patience (int): Number of rounds with no improvement before early stopping
-            min_delta (float): Minimum improvement required to reset patience counter
             
         Returns:
             dict: Training statistics including convergence information
@@ -214,13 +211,12 @@ class FederatedTrainer:
             'train_losses': [],
             'val_accuracies': [],
             'rounds_completed': 0,
-            'converged': False,
-            'best_val_accuracy': 0.0
+            'best_val_accuracy': 0.0,
+            'total_losses_per_round': []
         }
         
-        # Early stopping variables
+        # Track best validation accuracy
         best_val_acc = 0.0
-        wait_count = 0
 
         # Determine number of communication rounds
         num_rounds = max_rounds if max_rounds is not None else self.config.COMMUNICATION
@@ -270,11 +266,10 @@ class FederatedTrainer:
                     )
                 else:  # KCFU
                     # KCFU method doesn't currently return loss, so we use a dummy value
-                    self._train_epoch_client_distil(
+                    epoch_loss = self._train_epoch_client_distil(
                         selected_clients_id, models, criterion, 
                         optimizers, dataloaders, comm, trial_seed + epoch
                     )
-                    epoch_loss = 0.0  # Placeholder for KCFU
                 
                 epoch_losses.append(epoch_loss)
                 
@@ -288,18 +283,6 @@ class FederatedTrainer:
                       
             end_time = time.time()
             print(f'Average time per epoch: {(end_time-start_time)/num_epochs:.2f} seconds')
-
-            # Log metrics if logger is available
-           # if self.logger:
-            #    for c in selected_clients_id:
-             #       self.logger.log_gradient_alignment(
-              #          0, models['clients'][c], models['server'], 
-               #         dataloaders['train-private'][c], c
-                #    )
-                 #   self.logger.log_knowledge_gap(
-                  #      0, models['clients'][c], models['server'], 
-                   #     dataloaders['test'], c
-                    #)
 
             # Aggregate client models to update the server model
             self._aggregate_models(models, selected_clients_id, self.data_num)
@@ -317,45 +300,20 @@ class FederatedTrainer:
                 
                 print(f'Validation accuracy after round {comm+1}: {val_acc:.2f}%')
                 
-                # Check for early stopping if enabled
-                if early_stopping:
-                    if val_acc > best_val_acc + min_delta:
-                        best_val_acc = val_acc
-                        wait_count = 0
-                        stats['best_val_accuracy'] = best_val_acc
-                    else:
-                        wait_count += 1
-                    
-                    # Print convergence status
-                    if wait_count > 0:
-                        print(f'No improvement for {wait_count}/{patience} rounds. ' 
-                              f'Best val accuracy: {best_val_acc:.2f}%')
-                    
-                    # Check if we should stop early
-                    if wait_count >= patience:
-                        print(f'\n===== EARLY STOPPING =====\n'
-                              f'Model converged after {comm+1} communication rounds.\n'
-                              f'Best validation accuracy: {best_val_acc:.2f}%\n'
-                              f'===========================\n')
-                        stats['converged'] = True
-                        break
+                # Track best validation accuracy
+                if val_acc > best_val_acc:
+                    best_val_acc = val_acc
+                    stats['best_val_accuracy'] = best_val_acc
 
         print('>> Training completed.')
         return stats
     
     def _train_epoch_client_vanilla(self, selected_clients_id, models, criterion, 
                                    optimizers, dataloaders, trial_seed):
-        """
-        Train client models using vanilla federated learning (no knowledge distillation).
+        # Track total loss for convergence monitoring
+        total_loss = 0.0
+        total_batches = 0
         
-        Args:
-            selected_clients_id (list): IDs of selected clients for this round
-            models (dict): Dictionary of models
-            criterion (nn.Module): Loss function
-            optimizers (dict): Dictionary of optimizers
-            dataloaders (dict): Dictionary of dataloaders
-            trial_seed (int): Seed for reproducibility
-        """
         for c in selected_clients_id:
             # Set deterministic behavior for this client
             client_seed = (trial_seed * 100 + c * 10) % (2**31 - 1)
@@ -382,6 +340,10 @@ class FederatedTrainer:
                 # Standard cross-entropy loss
                 loss = torch.sum(criterion(scores, labels)) / labels.size(0)
                 
+                # Track loss for convergence monitoring
+                total_loss += loss.item()
+                total_batches += 1
+                
                 # Backward and optimize
                 self.iters += 1
                 optimizers['clients'][c].zero_grad()
@@ -391,26 +353,19 @@ class FederatedTrainer:
                 # Log occasionally
                 if (self.iters % 1000 == 0):
                     print(f'Client {c} | Batch {batch_idx} | Loss: {loss.item():.4f}')
+        
+        # Return average loss for this epoch
+        avg_loss = total_loss / max(1, total_batches)
+        return avg_loss
                     
     def _train_epoch_client_contrastive_entropy(self, selected_clients_id, models, criterion, 
                                                optimizers, dataloaders, trial_seed,
                                                tcl_temp=0.5, tcl_lambda=1.0,
                                                tcl_hard_ratio=0.5, tcl_adaptive_temp=True):
-        """
-        Train client models using vanilla federated learning with both cross-entropy and TCL.
+        # Track total loss for convergence monitoring
+        total_loss = 0.0
+        total_batches = 0
         
-        Args:
-            selected_clients_id (list): IDs of selected clients for this round
-            models (dict): Dictionary of models
-            criterion (nn.Module): Loss function
-            optimizers (dict): Dictionary of optimizers
-            dataloaders (dict): Dictionary of dataloaders
-            trial_seed (int): Seed for reproducibility
-            tcl_temp (float): Temperature parameter for TCL
-            tcl_lambda (float): Weight for TCL when combined with cross-entropy
-            tcl_hard_ratio (float): Ratio of hard negatives to prioritize
-            tcl_adaptive_temp (bool): Whether to use adaptive temperature
-        """
         for c in selected_clients_id:
             # Set deterministic behavior for this client
             client_seed = (trial_seed * 100 + c * 10) % (2**31 - 1)
@@ -453,6 +408,10 @@ class FederatedTrainer:
                 # Combined loss
                 loss = ce_loss + tcl_loss
                 
+                # Track loss for convergence monitoring
+                total_loss += loss.item()
+                total_batches += 1
+                
                 # Debug printout
                 if batch_idx % 100 == 0:
                     with torch.no_grad():
@@ -473,23 +432,18 @@ class FederatedTrainer:
                 if (self.iters % 1000 == 0):
                     print(f'Client {c} | Batch {batch_idx} | CE Loss: {ce_loss.item():.4f} | '
                           f'TCL Loss: {tcl_loss.item():.4f} | Total Loss: {loss.item():.4f}')
+        
+        # Return average loss for this epoch
+        avg_loss = total_loss / max(1, total_batches)
+        return avg_loss
     
     def _train_epoch_client_simple_contrastive(self, selected_clients_id, models, criterion, 
                                               optimizers, dataloaders, trial_seed,
                                               contrastive_temp=0.5, contrastive_weight=1.0):
-        """
-        Train client models using vanilla federated learning with both cross-entropy and simple contrastive loss.
+        # Track total loss for convergence monitoring
+        total_loss = 0.0
+        total_batches = 0
         
-        Args:
-            selected_clients_id (list): IDs of selected clients for this round
-            models (dict): Dictionary of models
-            criterion (nn.Module): Loss function
-            optimizers (dict): Dictionary of optimizers
-            dataloaders (dict): Dictionary of dataloaders
-            trial_seed (int): Seed for reproducibility
-            contrastive_temp (float): Temperature parameter for contrastive loss
-            contrastive_weight (float): Weight for contrastive loss when combined with cross-entropy
-        """
         for c in selected_clients_id:
             # Set deterministic behavior for this client
             client_seed = (trial_seed * 100 + c * 10) % (2**31 - 1)
@@ -528,6 +482,10 @@ class FederatedTrainer:
                 # Combined loss
                 loss = ce_loss + contrastive_weight * cl_loss
                 
+                # Track loss for convergence monitoring
+                total_loss += loss.item()
+                total_batches += 1
+                
                 # Debug printout
                 if batch_idx % 100 == 0:
                     with torch.no_grad():
@@ -548,6 +506,10 @@ class FederatedTrainer:
                 if (self.iters % 1000 == 0):
                     print(f'Client {c} | Batch {batch_idx} | CE Loss: {ce_loss.item():.4f} | '
                           f'CL Loss: {cl_loss.item():.4f} | Total Loss: {loss.item():.4f}')
+        
+        # Return average loss for this epoch
+        avg_loss = total_loss / max(1, total_batches)
+        return avg_loss
     
     def _train_epoch_client_distil(self, selected_clients_id, models, criterion, 
                                   optimizers, dataloaders, comm, trial_seed):
