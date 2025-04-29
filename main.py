@@ -15,9 +15,13 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data.sampler import SubsetRandomSampler
+import matplotlib.pyplot as plt
 
 # Import models
 import models.preact_resnet as resnet
+
+# Import feature visualization
+from training.feature_visualization import visualize_feature_space, compare_feature_spaces
 
 # Import data utilities
 from data.dirichlet_partitioner import dirichlet_balanced_partition
@@ -38,7 +42,6 @@ from analysis.logger_strategy import FederatedALLogger
 
 # Import configuration
 import config
-from config import *
 
 
 def parse_arguments():
@@ -52,6 +55,10 @@ def parse_arguments():
     parser.add_argument('--budget', type=int, help='Active learning budget per cycle')
     parser.add_argument('--base', type=int, help='Initial labeled set size')
     parser.add_argument('--seed', type=int, help='Random seed')
+    parser.add_argument('--max-rounds', type=int, help='Maximum communication rounds per cycle')
+    parser.add_argument('--early-stopping', action='store_true', help='Enable early stopping for convergence detection')
+    parser.add_argument('--patience', type=int, default=3, help='Early stopping patience (default: 3)')
+    parser.add_argument('--check-convergence', action='store_true', help='Check for model convergence before AL starts')
     return parser.parse_args()
 
 
@@ -73,7 +80,7 @@ def load_datasets():
         T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
     ])
 
-    cifar10_dataset_dir = DATA_ROOT
+    cifar10_dataset_dir = config.DATA_ROOT
 
     # Load datasets
     cifar10_train = CIFAR10(cifar10_dataset_dir, train=True, download=True, transform=cifar10_train_transform)
@@ -83,7 +90,7 @@ def load_datasets():
     return cifar10_train, cifar10_test, cifar10_select
 
 
-def create_test_loader(dataset, trial_seed, batch_size=BATCH):
+def create_test_loader(dataset, trial_seed, batch_size=config.BATCH):
     """Create DataLoader for test data."""
     test_generator = torch.Generator()
     test_generator.manual_seed(trial_seed)
@@ -99,36 +106,60 @@ def create_test_loader(dataset, trial_seed, batch_size=BATCH):
     
     return test_loader
 
+def create_val_loader(dataset, trial_seed, indices=None, batch_size=config.BATCH):
+    """Create DataLoader for validation data."""
+    val_generator = torch.Generator()
+    val_generator.manual_seed(trial_seed + 10000)
+    val_worker_init_fn = get_seed_worker(trial_seed + 60000)
+    
+    if indices is not None:
+        sampler = SubsetRandomSampler(indices)
+        val_loader = DataLoader(
+            dataset, 
+            batch_size=batch_size,
+            sampler=sampler,
+            worker_init_fn=val_worker_init_fn, 
+            generator=val_generator,
+            pin_memory=True
+        )
+    else:
+        val_loader = DataLoader(
+            dataset, 
+            batch_size=batch_size,
+            worker_init_fn=val_worker_init_fn, 
+            generator=val_generator,
+            pin_memory=True
+        )
+    
+    return val_loader
 
-# +++++++++++++++++ NEW FUNCTION ADDED +++++++++++++++++
-def save_initial_labeled_indices(labeled_set_list, total_data_num, trial_seed, alpha, clients, id2lab):
-    """Save the initial labeled indices to a JSON file."""
-    # Create a dictionary to store the labeled indices
-    labeled_indices_data = {
-        "metadata": {
-            "description": "Initial labeled indices (first ~10% samples)",
-            "seed": trial_seed,
-            "alpha": alpha,
-            "num_clients": len(labeled_set_list),
-            "total_samples_per_client": total_data_num.tolist()
-        },
-        "labeled_indices": {},
-        "labeled_classes": {}  # Also save the class labels for each index
-    }
+def plot_convergence(train_losses, val_accuracies, rounds, save_path, title="Model Convergence"):
+    """Plot training loss and validation accuracy to visualize convergence."""
+    fig, ax1 = plt.subplots(figsize=(10, 6))
     
-    # Add each client's labeled indices and their corresponding classes
-    for c in range(clients):
-        labeled_indices_data["labeled_indices"][str(c)] = labeled_set_list[c]
-        labeled_indices_data["labeled_classes"][str(c)] = [int(id2lab[idx]) for idx in labeled_set_list[c]]
+    # Plot training loss
+    color = 'tab:red'
+    ax1.set_xlabel('Communication Round')
+    ax1.set_ylabel('Training Loss', color=color)
+    ax1.plot(rounds, train_losses, color=color, marker='o', linestyle='-', label='Training Loss')
+    ax1.tick_params(axis='y', labelcolor=color)
     
-    # Save to JSON file
-    file_name = f"selected_cifar10_samples_alpha{alpha}_clients{clients}_seed{trial_seed}.json"
-    with open(file_name, 'w') as f:
-        json.dump(labeled_indices_data, f, indent=2)
+    # Create second y-axis for validation accuracy
+    ax2 = ax1.twinx()
+    color = 'tab:blue'
+    ax2.set_ylabel('Validation Accuracy (%)', color=color)
+    ax2.plot(rounds, val_accuracies, color=color, marker='s', linestyle='-', label='Validation Accuracy')
+    ax2.tick_params(axis='y', labelcolor=color)
     
-    print(f"Initial labeled indices saved to {file_name}")
-# +++++++++++++++++ END OF NEW FUNCTION +++++++++++++++++
-
+    plt.title(title)
+    fig.tight_layout()
+    
+    # Save figure
+    os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Convergence plot saved to {save_path}")
 
 def main():
     """Main function to run federated active learning experiments."""
@@ -164,6 +195,17 @@ def main():
         config.SEED = args.seed
         print(f"Setting random seed to: {config.SEED}")
     
+    # Early stopping settings
+    max_rounds = args.max_rounds if args.max_rounds else config.COMMUNICATION
+    early_stopping = args.early_stopping
+    check_convergence = args.check_convergence
+    patience = args.patience
+    
+    if early_stopping or check_convergence:
+        print(f"Early stopping enabled with patience={patience}")
+    if max_rounds != config.COMMUNICATION:
+        print(f"Setting maximum communication rounds to: {max_rounds}")
+    
     # Log configuration
     log_config(config)
     
@@ -174,44 +216,36 @@ def main():
     # Create results directory
     results_dir = create_results_dir("results")
     
-    # Check for SSL_checkpoints directory
-    ssl_checkpoint_dir = os.path.join(os.path.dirname(__file__), 'SSL_checkpoints')
-    if not os.path.exists(ssl_checkpoint_dir):
-        os.makedirs(ssl_checkpoint_dir)
-        print(f"Created directory for SSL checkpoints: {ssl_checkpoint_dir}")
-    
-    # Check for the checkpoint file
-    ssl_checkpoint_path = os.path.join(ssl_checkpoint_dir, 'final_checkpoint.pt')
-    if not os.path.exists(ssl_checkpoint_path) and ACTIVE_LEARNING_STRATEGY == "SSLEntropy":
-        print(f"Warning: SimCLR checkpoint not found at {ssl_checkpoint_path}")
-        print("You need to provide a SimCLR checkpoint for the SSLEntropy strategy")
+    # Create visualization directory
+    viz_dir = os.path.join(results_dir, "visualizations")
+    os.makedirs(viz_dir, exist_ok=True)
     
     # Load datasets
     cifar10_train, cifar10_test, cifar10_select = load_datasets()
     
     # Prepare for trials
-    accuracies = [[] for _ in range(TRIALS)]
+    accuracies = [[] for _ in range(config.TRIALS)]
     
     # Extract all labels
-    indices = list(range(NUM_TRAIN))
+    indices = list(range(config.NUM_TRAIN))
     id2lab = [cifar10_train[id][1] for id in indices]
     id2lab = np.array(id2lab)
     
     # Run trials
-    for trial in range(TRIALS):
-        trial_seed = SEED + TRIAL_SEED_OFFSET * (trial + 1)
+    for trial in range(config.TRIALS):
+        trial_seed = config.SEED + config.TRIAL_SEED_OFFSET * (trial + 1)
         set_all_seeds(trial_seed)
         
-        print(f"\n=== Trial {trial+1}/{TRIALS} (Seed: {trial_seed}) ===\n")
-        print(f"Generating Dirichlet partition with alpha {ALPHA}, seed {trial_seed} for {CLIENTS} clients...")
+        print(f"\n=== Trial {trial+1}/{config.TRIALS} (Seed: {trial_seed}) ===\n")
+        print(f"Generating Dirichlet partition with alpha {config.ALPHA}, seed {trial_seed} for {config.CLIENTS} clients...")
         
         # Create non-IID data partitioning
-        data_splits = dirichlet_balanced_partition(cifar10_train, CLIENTS, alpha=ALPHA, seed=trial_seed)
+        data_splits = dirichlet_balanced_partition(cifar10_train, config.CLIENTS, alpha=config.ALPHA, seed=trial_seed)
         
         # Initialize logger
         logger = FederatedALLogger(
-            strategy_name=ACTIVE_LEARNING_STRATEGY,
-            num_clients=CLIENTS,
+            strategy_name=config.ACTIVE_LEARNING_STRATEGY,
+            num_clients=config.CLIENTS,
             num_classes=10,
             trial_id=trial+1 
         )
@@ -223,21 +257,21 @@ def main():
         private_unlab_loaders = []
         num_classes = 10
         
-        print('Query Strategy:', ACTIVE_LEARNING_STRATEGY)
-        print('Number of clients:', CLIENTS)
-        print('Number of epochs:', EPOCH)
-        print('Number of communication rounds:', COMMUNICATION)
+        print('Query Strategy:', config.ACTIVE_LEARNING_STRATEGY)
+        #print('Number of clients:', config.CLIENTS)
+        #print('Number of epochs:', config.EPOCH)
+        #print('Number of communication rounds:', config.COMMUNICATION)
         
         # Prepare client data
         resnet8 = resnet.preact_resnet8_cifar(num_classes=num_classes)
         client_models = []
         data_list = []
-        total_data_num = [len(data_splits[c]) for c in range(CLIENTS)]
+        total_data_num = [len(data_splits[c]) for c in range(config.CLIENTS)]
         total_data_num = np.array(total_data_num)
         
         # Calculate base and budget sizes
-        base = np.ceil((BASE / NUM_TRAIN) * total_data_num).astype(int)
-        add = np.ceil((BUDGET / NUM_TRAIN) * total_data_num).astype(int)
+        base = np.ceil((config.BASE / config.NUM_TRAIN) * total_data_num).astype(int)
+        add = np.ceil((config.BUDGET / config.NUM_TRAIN) * total_data_num).astype(int)
         print('Base number:', base)
         print('Budget each round:', add)
         
@@ -246,7 +280,7 @@ def main():
         loss_weight_list = []
         
         # Prepare initial data pools for each client
-        for c in range(CLIENTS):
+        for c in range(config.CLIENTS):
             # Setup deterministic data selection
             client_worker_init_fn = get_seed_worker(trial_seed + c * 100)
             g_labeled = torch.Generator()
@@ -286,7 +320,7 @@ def main():
             # Create data loaders
             private_train_loaders.append(DataLoader(
                 cifar10_train, 
-                batch_size=BATCH,
+                batch_size=config.BATCH,
                 sampler=SubsetRandomSampler(labeled_set_list[c]),
                 num_workers=0,
                 worker_init_fn=client_worker_init_fn,
@@ -296,7 +330,7 @@ def main():
             
             private_unlab_loaders.append(DataLoader(
                 cifar10_train, 
-                batch_size=BATCH,
+                batch_size=config.BATCH,
                 sampler=SubsetRandomSampler(unlabeled_set_list[c]),
                 num_workers=0,
                 worker_init_fn=client_worker_init_fn,
@@ -309,43 +343,48 @@ def main():
         
         data_num = np.array(data_num)
 
-        # +++++++++++++++++ NEW CODE ADDED +++++++++++++++++
-        # Save the initial labeled indices to a JSON file
-        save_initial_labeled_indices(labeled_set_list, total_data_num, trial_seed, ALPHA, CLIENTS, id2lab)
-        # +++++++++++++++++ END OF NEW CODE +++++++++++++++++
-        
         # Log initial data distributions
-        for c in range(CLIENTS):
+        for c in range(config.CLIENTS):
             initial_class_labels = [id2lab[idx] for idx in labeled_set_list[c]]
             logger.log_sample_classes(0, initial_class_labels, c)
         
         # Initialize strategy manager
         strategy_params = {
-            'strategy_name': ACTIVE_LEARNING_STRATEGY,
+            'strategy_name': config.ACTIVE_LEARNING_STRATEGY,
             'loss_weight_list': loss_weight_list,
             'device': device
         }
         
         # Add confidence threshold for PseudoEntropy if specified
-        if ACTIVE_LEARNING_STRATEGY == "PseudoEntropy" and args.confidence is not None:
+        if config.ACTIVE_LEARNING_STRATEGY == "PseudoEntropy" and args.confidence is not None:
             strategy_params['confidence_threshold'] = args.confidence
             print(f"Setting PseudoEntropy confidence threshold to: {args.confidence}")
         
         strategy_manager = StrategyManager(**strategy_params)
         
         # If using strategies that need labeled set list or total clients
-        if ACTIVE_LEARNING_STRATEGY in ["GlobalOptimal", "CoreSetGlobalOptimal", "CoreSet", "SSLEntropy"]:
-            strategy_manager.set_total_clients(CLIENTS)
+        if config.ACTIVE_LEARNING_STRATEGY in ["GlobalOptimal", "CoreSetGlobalOptimal", "CoreSet", "SSLEntropy", "PseudoEntropy"]:
+            strategy_manager.set_total_clients(config.CLIENTS)
             strategy_manager.set_labeled_set_list(labeled_set_list)
 
         # Create test loader
         test_loader = create_test_loader(cifar10_test, trial_seed)
         
+        # Create validation loader for convergence monitoring
+        # Using 20% of test set as validation
+        test_indices = list(range(len(cifar10_test)))
+        test_rng = np.random.RandomState(trial_seed + 500)
+        test_rng.shuffle(test_indices)
+        val_size = int(0.2 * len(test_indices))
+        val_indices = test_indices[:val_size]
+        val_loader = create_val_loader(cifar10_test, trial_seed, val_indices)
+        
         # Create dataloaders dictionary
         dataloaders = {
             'train-private': private_train_loaders,
             'unlab-private': private_unlab_loaders,
-            'test': test_loader
+            'test': test_loader,
+            'val': val_loader
         }
         
         # Initialize federated trainer
@@ -354,7 +393,7 @@ def main():
         trainer.set_data_num(data_num)
         
         # Active learning cycles
-        for cycle in range(CYCLES):
+        for cycle in range(config.CYCLES):
             # Create server model
             server = resnet.preact_resnet8_cifar(num_classes=num_classes).to(device)
             models = {'clients': client_models, 'server': server}
@@ -365,32 +404,62 @@ def main():
             optim_clients = []
             sched_clients = []
             
-            for c in range(CLIENTS):
+            for c in range(config.CLIENTS):
                 optim_clients.append(optim.SGD(
                     models['clients'][c].parameters(), 
-                    lr=LR,
-                    momentum=MOMENTUM, 
-                    weight_decay=WDECAY
+                    lr=config.LR,
+                    momentum=config.MOMENTUM, 
+                    weight_decay=config.WDECAY
                 ))
-                sched_clients.append(lr_scheduler.MultiStepLR(optim_clients[c], milestones=MILESTONES))
+                sched_clients.append(lr_scheduler.MultiStepLR(optim_clients[c], milestones=config.MILESTONES))
             
             optim_server = optim.SGD(
                 models['server'].parameters(),
-                lr=LR,
-                momentum=MOMENTUM,
-                weight_decay=WDECAY
+                lr=config.LR,
+                momentum=config.MOMENTUM,
+                weight_decay=config.WDECAY
             )
             
-            sched_server = lr_scheduler.MultiStepLR(optim_server, milestones=MILESTONES)
+            sched_server = lr_scheduler.MultiStepLR(optim_server, milestones=config.MILESTONES)
             
             optimizers = {'clients': optim_clients, 'server': optim_server}
             schedulers = {'clients': sched_clients, 'server': sched_server}
             
-            # Train
-            trainer.train(models, criterion, optimizers, schedulers, dataloaders, EPOCH, trial_seed)
+            # Train with convergence monitoring if requested
+            if cycle == 0 and check_convergence:
+                print("\n===== Checking for model convergence before active learning =====\n")
+                # Run with early stopping for first cycle to check convergence
+                train_stats = trainer.train(
+                    models, criterion, optimizers, schedulers, dataloaders, config.EPOCH, trial_seed,
+                    val_loader=dataloaders['val'], max_rounds=max_rounds, 
+                    early_stopping=True, patience=patience
+                )
+                
+                # Plot convergence
+                if train_stats['rounds_completed'] > 0:
+                    conv_plot_path = os.path.join(viz_dir, f"convergence_trial_{trial+1}_cycle_{cycle+1}.png")
+                    plot_convergence(
+                        train_stats['train_losses'],
+                        train_stats['val_accuracies'],
+                        list(range(1, train_stats['rounds_completed'] + 1)),
+                        conv_plot_path,
+                        title=f"Model Convergence - Trial {trial+1} Cycle {cycle+1}"
+                    )
+                    
+                    # Print convergence summary
+                    print("\n===== Convergence Summary =====")
+                    print(f"Rounds completed: {train_stats['rounds_completed']}")
+                    print(f"Best validation accuracy: {train_stats['best_val_accuracy']:.2f}%")
+                    print(f"Converged: {'Yes' if train_stats['converged'] else 'No - reached max rounds'}")
+                    print("=============================\n")
+            else:
+                # Regular training for subsequent cycles
+                train_stats = trainer.train(
+                    models, criterion, optimizers, schedulers, dataloaders, config.EPOCH, trial_seed
+                )
             
             # Count total labeled samples
-            total_labels = sum(len(labeled_set_list[c]) for c in range(CLIENTS))
+            total_labels = sum(len(labeled_set_list[c]) for c in range(config.CLIENTS))
             
             # Prepare for next cycle
             private_train_loaders = []
@@ -401,14 +470,14 @@ def main():
             # Log model distances at beginning of cycle
             if cycle == 0:
                 model_distances = {}
-                for c in range(CLIENTS):
+                for c in range(config.CLIENTS):
                     distance = logger.calculate_model_distance(models['clients'][c], models['server'])
                     model_distances[c] = distance
                 
                 logger.log_model_distances(cycle, model_distances)
             
             # Sample for annotations
-            for c in range(CLIENTS):
+            for c in range(config.CLIENTS):
                 # Setup deterministic sampling
                 cycle_worker_init_fn = get_seed_worker(trial_seed + c * 100 + cycle * 1000)
                 g_labeled_cycle = torch.Generator()
@@ -425,7 +494,7 @@ def main():
                 # Create unlabeled loader for sequential sampling
                 unlabeled_loader = DataLoader(
                     cifar10_select,
-                    batch_size=BATCH,
+                    batch_size=config.BATCH,
                     sampler=SubsetSequentialSampler(unlabeled_set_list[c]),
                     num_workers=0,
                     worker_init_fn=cycle_worker_init_fn,
@@ -465,7 +534,7 @@ def main():
                 # Create updated dataloaders
                 private_train_loaders.append(DataLoader(
                     cifar10_train,
-                    batch_size=BATCH,
+                    batch_size=config.BATCH,
                     sampler=SubsetRandomSampler(labeled_set_list[c]),
                     num_workers=0,
                     worker_init_fn=cycle_worker_init_fn,
@@ -475,7 +544,7 @@ def main():
                 
                 private_unlab_loaders.append(DataLoader(
                     cifar10_train,
-                    batch_size=BATCH,
+                    batch_size=config.BATCH,
                     sampler=SubsetRandomSampler(unlabeled_set_list[c]),
                     num_workers=0,
                     worker_init_fn=cycle_worker_init_fn,
@@ -488,13 +557,13 @@ def main():
             logger.log_global_accuracy(cycle, acc_server)
             
             print('Trial {}/{} || Cycle {}/{} || Labelled sets size {}: server acc {:.2f}%'.format(
-                trial + 1, TRIALS, cycle + 1, CYCLES, total_labels, acc_server))
+                trial + 1, config.TRIALS, cycle + 1, config.CYCLES, total_labels, acc_server))
             
             # Log the accumulated labeled samples for each client
             print("\n===== Accumulated Labeled Samples =====")
-            for c in range(CLIENTS):
+            for c in range(config.CLIENTS):
                 print(f"Client {c}: {len(labeled_set_list[c])} samples")
-            print(f"Total labeled samples: {sum(len(labeled_set_list[c]) for c in range(CLIENTS))}")
+            print(f"Total labeled samples: {sum(len(labeled_set_list[c]) for c in range(config.CLIENTS))}")
             print("=======================================\n")
             
             
@@ -515,16 +584,35 @@ def main():
             
             # Save logs
             logger.save_data()
+            
+            # Visualize feature space (only at the beginning and end of training)
+            if cycle == 0 or cycle == config.CYCLES - 1:
+                print("\nGenerating feature space visualization...")
+                # Create directory for visualizations
+                method_name = config.LOCAL_MODEL_UPDATE
+                viz_path = os.path.join(viz_dir, f"{method_name}_trial_{trial+1}_cycle_{cycle+1}.png")
+                
+                # Generate visualization for server model only
+                visualize_feature_space(
+                    models['server'],
+                    dataloaders['test'],
+                    device,
+                    title=f"Server Model Feature Space - {method_name} (Cycle {cycle+1})",
+                    output_path=viz_path,
+                    max_samples=1000  # Limit samples for faster visualization
+                )
+                
+                print(f"Visualization saved to {viz_path}")
         
         print('Accuracies for trial {}:'.format(trial), accuracies[trial])
 
         # Add this at the end of each trial (around line 380-390)
-        if ACTIVE_LEARNING_STRATEGY == "GlobalOptimal":
+        if config.ACTIVE_LEARNING_STRATEGY == "GlobalOptimal":
             print("\n========== GLOBAL OPTIMAL STRATEGY SUMMARY ==========")
-            print(f"Trial {trial+1}/{TRIALS}")
+            print(f"Trial {trial+1}/{config.TRIALS}")
             
             # Calculate standard deviation and coefficient of variation of dataset sizes
-            final_sizes = np.array([len(labeled_set_list[c]) for c in range(CLIENTS)])
+            final_sizes = np.array([len(labeled_set_list[c]) for c in range(config.CLIENTS)])
             mean_size = np.mean(final_sizes)
             std_size = np.std(final_sizes)
             cv = std_size / mean_size * 100  # Coefficient of variation as percentage
