@@ -47,7 +47,7 @@ TCL_ADAPTIVE_TEMP = True
 
 # Simple Contrastive Loss settings
 CONTRASTIVE_TEMPERATURE = 0.5
-CONTRASTIVE_WEIGHT = 0.5
+CONTRASTIVE_WEIGHT = 1.75
 
 # SSL settings
 # These parameters control the federated SSL autoencoder step
