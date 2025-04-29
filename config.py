@@ -36,7 +36,7 @@ CYCLES=2
 RATIO=0.8
 CLIENTS=10
 TRIALS=1
-LOCAL_MODEL_UPDATE = "ContrastiveEntropy" # Options are "Vanilla", "ContrastiveEntropy", and "KFCU"  
+LOCAL_MODEL_UPDATE = "SimpleContrastive" # Options are "Vanilla", "ContrastiveEntropy", "SimpleContrastive", and "KFCU"  
 DATATSET = "CIFAR10" # Options are "CIFAR10" and "SVHN"
 
 # TCL settings
@@ -44,6 +44,10 @@ TCL_TEMPERATURE = 0.5
 TCL_LAMBDA = 0.5  # Reduced from 1.0 to a much smaller value
 TCL_HARD_MINING_RATIO = 0.5
 TCL_ADAPTIVE_TEMP = True
+
+# Simple Contrastive Loss settings
+CONTRASTIVE_TEMPERATURE = 0.5
+CONTRASTIVE_WEIGHT = 0.5
 
 # SSL settings
 # These parameters control the federated SSL autoencoder step
