@@ -15,11 +15,10 @@ DATA_ROOT = 'data/cifar-10-batches-py'
 # - "GlobalOptimal"
 # - "CoreSet"
 # - "CoreSetGlobalOptimal"
-# - "SSLEntropy"
 # - "PseudoEntropy"
 # - "PseudoConfidence"
 
-ACTIVE_LEARNING_STRATEGY = "PseudoEntropy"
+ACTIVE_LEARNING_STRATEGY = "PseudoConfidence"
 
 # random seed
 SEED = 44
@@ -37,31 +36,17 @@ CYCLES=2
 RATIO=0.8
 CLIENTS=10
 TRIALS=1
-LOCAL_MODEL_UPDATE = "SimpleContrastive" # Options are "Vanilla", "ContrastiveEntropy", "SimpleContrastive", and "KFCU"  
+LOCAL_MODEL_UPDATE = "DebiasedContrastive" # Options are "Vanilla", "SimpleContrastive", "DebiasedContrastive", and "KFCU"  
 DATATSET = "CIFAR10" # Options are "CIFAR10" and "SVHN"
-
-# TCL settings
-TCL_TEMPERATURE = 0.5
-TCL_LAMBDA = 0.5  # Reduced from 1.0 to a much smaller value
-TCL_HARD_MINING_RATIO = 0.5
-TCL_ADAPTIVE_TEMP = True
 
 # Simple Contrastive Loss settings
 CONTRASTIVE_TEMPERATURE = 0.5
 CONTRASTIVE_WEIGHT = 1.75
 
-# SSL settings
-# These parameters control the federated SSL autoencoder step
-USE_GLOBAL_SSL = True           # Whether to use SSL autoencoder
-SSL_FEDERATED = True           # Whether to train the autoencoder in a federated manner
-SSL_USE_CONTRASTIVE = True     # ADDED: Whether to use contrastive learning for SSL
-SSL_TEMPERATURE = 0.5          # ADDED: Temperature parameter for contrastive loss
-SSL_PROXIMAL_MU = 0.01         # ADDED: Proximal term weight for FedProx-like regularization
-SSL_LOCAL_EPOCHS = 1           # Number of epochs for local training on each client
-SSL_FEDERATED_ROUNDS = 3       # Number of federated rounds for autoencoder training
-SSL_BATCH_SIZE = 128           # Batch size for SSL training
-SSL_LATENT_DIM = 128           # Dimension of the latent space in the autoencoder
-SSL_LEARNING_RATE = 1e-3       # Learning rate for SSL training
+# Debiased Contrastive Loss settings
+DCL_TEMPERATURE = 0.5     # Temperature parameter for DCL
+DCL_BETA = 0.9           # Beta parameter for negative sample re-weighting
+DCL_LAMBDA = 1.0         # Weight for DCL when combined with cross-entropy
 
 
 # training
