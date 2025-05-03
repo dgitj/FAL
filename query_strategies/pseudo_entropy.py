@@ -256,7 +256,7 @@ class PseudoClassBalancedEntropySampler:
             projected_ratios = {}
             
             for cls in available_classes:
-                # Calculate the projected count after initial allocation
+                # Calculate the projected count after initial allocationf
                 current_count = current_distribution.get(cls, 0) * labeled_set_size
                 projected_counts[cls] = current_count + target_counts.get(cls, 0)
                 

@@ -10,7 +10,10 @@ from .logo import LoGoSampler
 from .strategy_manager import StrategyManager
 from .entropy_global_optimal import ClassBalancedEntropySampler
 from .coreset import CoreSetSampler
-from .coreset_global_optimal import ClassBalancedCoreSetSampler 
+from .coreset_global_optimal import ClassBalancedCoreSetSampler
+from .pseudo_entropy import PseudoClassBalancedEntropySampler
+from .pseudo_confidence import PseudoClassBalancedConfidenceSampler
+
 # Define __all__ for explicit exports
 __all__ = [
     "BADGESampler",
@@ -24,4 +27,6 @@ __all__ = [
     "ClassBalancedEntropySampler",
     "CoreSetSampler",
     "ClassBalancedCoreSetSampler",
+    "PseudoClassBalancedEntropySampler",
+    "PseudoClassBalancedConfidenceSampler",
 ]
