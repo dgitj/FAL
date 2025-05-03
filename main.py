@@ -352,14 +352,14 @@ def main():
         }
         
         # Add confidence threshold for PseudoEntropy if specified
-        if config.ACTIVE_LEARNING_STRATEGY == "PseudoEntropy" and args.confidence is not None:
+        if config.ACTIVE_LEARNING_STRATEGY == ["PseudoEntropy", "PseudoConfidence"] and args.confidence is not None:
             strategy_params['confidence_threshold'] = args.confidence
             print(f"Setting PseudoEntropy confidence threshold to: {args.confidence}")
         
         strategy_manager = StrategyManager(**strategy_params)
         
         # If using strategies that need labeled set list or total clients
-        if config.ACTIVE_LEARNING_STRATEGY in ["GlobalOptimal", "CoreSetGlobalOptimal", "CoreSet", "SSLEntropy", "PseudoEntropy"]:
+        if config.ACTIVE_LEARNING_STRATEGY in ["GlobalOptimal", "CoreSetGlobalOptimal", "CoreSet", "SSLEntropy", "PseudoEntropy", "PseudoConfidence"]:
             strategy_manager.set_total_clients(config.CLIENTS)
             strategy_manager.set_labeled_set_list(labeled_set_list)
 

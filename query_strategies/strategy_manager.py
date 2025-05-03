@@ -8,8 +8,8 @@ from query_strategies.logo import LoGoSampler
 from query_strategies.entropy_global_optimal import ClassBalancedEntropySampler
 from query_strategies.coreset import CoreSetSampler
 from query_strategies.coreset_global_optimal import ClassBalancedCoreSetSampler
-from query_strategies.ssl_entropy import SSLEntropySampler
 from query_strategies.pseudo_entropy import PseudoClassBalancedEntropySampler
+from query_strategies.pseudo_confidence import PseudoClassBalancedConfidenceSampler
 
 from config import ACTIVE_LEARNING_STRATEGY
 
@@ -90,16 +90,15 @@ class StrategyManager:
         elif strategy_name == "CoreSet":
             return CoreSetSampler(self.device)
             
-        elif strategy_name == "SSLEntropy":
-            # Now we don't need to pass the global_autoencoder, as the SSLEntropySampler will load
-            # the SimCLR model from checkpoint
-            return SSLEntropySampler(self.device)
-            
         elif strategy_name == "PseudoEntropy":
             # Use provided confidence threshold or default to 0.0
             confidence = self.confidence_threshold if self.confidence_threshold is not None else 0.0
             print(f"[StrategyManager] Initializing PseudoEntropy with confidence threshold: {confidence}")
             return PseudoClassBalancedEntropySampler(self.device, confidence_threshold=confidence)
+            
+        elif strategy_name == "PseudoConfidence":
+            print(f"[StrategyManager] Initializing PseudoConfidence strategy")
+            return PseudoClassBalancedConfidenceSampler(self.device)
 
         else:
             raise ValueError(f"Invalid strategy name: {strategy_name}")
@@ -150,24 +149,22 @@ class StrategyManager:
             if self.labeled_set_list is not None and c < len(self.labeled_set_list):
                 labeled_set = self.labeled_set_list[c]
             return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, labeled_set=labeled_set, seed=seed)
-        elif self.strategy_name in ["GlobalOptimal", "CoreSetGlobalOptimal", "SSLEntropy", "PseudoEntropy"]:
-            # These strategies need both models, client ID, and access to true labels
-            labeled_set = None
-            if self.labeled_set_list is not None and c < len(self.labeled_set_list):
-                labeled_set = self.labeled_set_list[c]
-            return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, labeled_set=labeled_set, seed=seed)
-            # If this is the last client to be processed, allocate budget globally
-            if self.clients_processed >= self.total_clients:
-                # Reset counter for next round
-                self.clients_processed = 0
-                
-                # Allocate budget across all clients
-                client_ids = list(range(self.total_clients))
-                total_budget = num_samples * self.total_clients  # Total budget across all clients
-                self.sampler.allocate_global_budget(client_ids, total_budget)
-            
-            # Select samples based on global allocation
-            return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, seed)
-            
+        elif self.strategy_name in ["GlobalOptimal", "CoreSetGlobalOptimal", "PseudoEntropy", "PseudoConfidence"]:
+          # These strategies need both models, client ID, and access to true labels
+          labeled_set = None
+          if self.labeled_set_list is not None and c < len(self.labeled_set_list):
+              labeled_set = self.labeled_set_list[c]         
+          # If this is the last client to be processed, allocate budget globally
+          if self.clients_processed >= self.total_clients:
+              # Reset counter for next round
+              self.clients_processed = 0
+              
+              # Allocate budget across all clients
+            #  client_ids = list(range(self.total_clients))
+             # total_budget = num_samples * self.total_clients  # Total budget across all clients
+             # self.sampler.allocate_global_budget(client_ids, total_budget)
+          
+          # Select samples based on global allocation
+          return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, labeled_set=labeled_set, seed=seed)    
         else:
             raise ValueError(f"Unknown strategy: {self.strategy_name}")
