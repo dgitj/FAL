@@ -781,3 +781,97 @@ class FederatedTrainer:
     def get_global_distribution(self):
         """Returns the current global distribution"""
         return self.global_class_distribution
+        
+    def compute_class_distribution_statistics(self, client_class_distributions, num_classes):
+        """
+        Compute statistics about class distributions across clients.
+        
+        Args:
+            client_class_distributions (dict): Dictionary mapping client_id to their class distribution
+            num_classes (int): Total number of classes
+            
+        Returns:
+            dict: Statistics including mean, variance, and coefficient of variation for each class
+        """
+        # Initialize arrays to store distributions
+        client_count = len(client_class_distributions)
+        if client_count == 0:
+            return None
+        
+        # Convert absolute counts to percentages for each client
+        normalized_distributions = {}
+        for client_id, counts in client_class_distributions.items():
+            total = sum(counts.values())
+            if total > 0:
+                normalized_distributions[client_id] = {
+                    cls: counts.get(cls, 0) / total for cls in range(num_classes)
+                }
+        
+        # Create a matrix where each row is a client and each column is a class
+        distribution_matrix = np.zeros((client_count, num_classes))
+        for i, (client_id, distribution) in enumerate(normalized_distributions.items()):
+            for cls in range(num_classes):
+                distribution_matrix[i, cls] = distribution.get(cls, 0)
+        
+        # Compute statistics for each class across clients
+        class_stats = {}
+        for cls in range(num_classes):
+            class_percentages = distribution_matrix[:, cls]
+            
+            mean = np.mean(class_percentages)
+            variance = np.var(class_percentages)
+            std_dev = np.std(class_percentages)
+            cv = (std_dev / mean) * 100 if mean > 0 else float('inf')  # Coefficient of variation as percentage
+            
+            class_stats[cls] = {
+                'mean': mean,
+                'variance': variance,
+                'std_dev': std_dev,
+                'cv': cv,
+                'min': np.min(class_percentages),
+                'max': np.max(class_percentages),
+                'range': np.max(class_percentages) - np.min(class_percentages)
+            }
+        
+        # Compute overall distribution imbalance metrics
+        total_variance = np.sum([stats['variance'] for stats in class_stats.values()])
+        avg_cv = np.mean([stats['cv'] for stats in class_stats.values() if not np.isinf(stats['cv'])])
+        
+        return {
+            'class_stats': class_stats,
+            'total_variance': total_variance,
+            'avg_cv': avg_cv
+        }
+    
+    def analyze_class_distribution_variance(self):
+        """
+        Analyze the variance of class distributions across clients.
+        
+        Returns:
+            dict: Statistics about class distribution variance
+        """
+        if not self.client_class_distributions:
+            return None
+            
+        # Call the function to compute statistics
+        stats = self.compute_class_distribution_statistics(
+            self.client_class_distributions, 
+            self.config.NUM_CLASSES
+        )
+        
+        # Print a summary of the findings
+        print("\n=== Class Distribution Variance Analysis ===")
+        print(f"Total variance across all classes: {stats['total_variance']:.6f}")
+        print(f"Average coefficient of variation: {stats['avg_cv']:.2f}%")
+        
+        # Print per-class statistics
+        print("\nPer-class statistics:")
+        for cls in range(self.config.NUM_CLASSES):
+            cls_stats = stats['class_stats'][cls]
+            print(f"  Class {cls}:")
+            print(f"    Mean: {cls_stats['mean']*100:.2f}%")
+            print(f"    Std Dev: {cls_stats['std_dev']*100:.2f}%")
+            print(f"    CV: {cls_stats['cv']:.2f}%")
+            print(f"    Range: {cls_stats['range']*100:.2f}% (Min: {cls_stats['min']*100:.2f}%, Max: {cls_stats['max']*100:.2f}%)")
+        
+        return stats
