@@ -2,7 +2,7 @@
 '''
 
 # Dataset selection
-DATASET = "CIFAR100"  # Options are "CIFAR10", "SVHN", and "CIFAR100"
+DATASET = "CIFAR10"  # Options are "CIFAR10", "SVHN", and "CIFAR100"
 
 # directory paths for datasets and number of classes
 if DATASET == "CIFAR10":
@@ -47,10 +47,10 @@ BASE = 5000
 EPOCH=2
 COMMUNICATION=2
 CYCLES=2
-RATIO=0.8
+RATIO=1.0
 CLIENTS=10
 TRIALS=1
-LOCAL_MODEL_UPDATE = "DebiasedContrastive" # Options are "Vanilla", "SimpleContrastive", "DebiasedContrastive", and "KFCU"  
+LOCAL_MODEL_UPDATE = "Vanilla" # Options are "Vanilla", "SimpleContrastive", "DebiasedContrastive", and "KFCU"  
 # This is now set at the top of the file
 # DATASET = "CIFAR10" # Options are "CIFAR10" and "SVHN"
 

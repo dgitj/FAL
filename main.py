@@ -542,6 +542,18 @@ def main():
                 
                 logger.log_model_distances(cycle, model_distances)
             
+            # Before sample selection, update all clients' class distributions in trainer
+            for c in range(config.CLIENTS):
+                trainer.update_client_distribution(c, labeled_set_list[c], cifar10_train)
+            
+            # Aggregate class distributions at server level
+            global_distribution = trainer.aggregate_class_distributions()
+            
+            # Check if PseudoConfidence needs global distribution
+            if config.ACTIVE_LEARNING_STRATEGY == "PseudoConfidence" and global_distribution is None:
+                raise ValueError("Error: PseudoConfidence strategy requires global class distribution, but none was computed. "
+                                "Make sure there are labeled samples available on all clients.")
+            
             # Sample for annotations
             for c in range(config.CLIENTS):
                 # Setup deterministic sampling
@@ -569,15 +581,31 @@ def main():
                 )
                 
                 # Select samples using strategy manager
-                selected_samples, remaining_unlabeled = strategy_manager.select_samples(
-                    models['clients'][c],
-                    models['server'],
-                    unlabeled_loader,
-                    c,
-                    unlabeled_set_list[c],
-                    add[c],
-                    seed=trial_seed + c * 100 + cycle * 1000
-                )
+                if config.ACTIVE_LEARNING_STRATEGY == "PseudoConfidence":
+                    # Pass global distribution when using PseudoConfidence
+                    selected_samples, remaining_unlabeled = strategy_manager.select_samples(
+                        models['clients'][c],
+                        models['server'],
+                        unlabeled_loader,
+                        c,
+                        unlabeled_set_list[c],
+                        add[c],
+                        labeled_set=labeled_set_list[c],
+                        seed=trial_seed + c * 100 + cycle * 1000,
+                        global_class_distribution=global_distribution  # Pass global distribution
+                    )
+                else:
+                    # Original call for other strategies
+                    selected_samples, remaining_unlabeled = strategy_manager.select_samples(
+                        models['clients'][c],
+                        models['server'],
+                        unlabeled_loader,
+                        c,
+                        unlabeled_set_list[c],
+                        add[c],
+                        labeled_set=labeled_set_list[c],
+                        seed=trial_seed + c * 100 + cycle * 1000
+                    )
                 
                 # Log selected samples and their classes
                 logger.log_selected_samples(cycle + 1, selected_samples, c)
