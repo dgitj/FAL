@@ -32,7 +32,7 @@ class PseudoClassBalancedConfidenceSampler:
         self.client_cycles = {}
         self.client_labeled_sets = {}
 
-    def estimate_global_distribution(self, model, dataset, sample_size=1000, seed=42):
+    def estimate_global_distribution(self, model, dataset, sample_size=10000, seed=42):
         """
         Estimate the global class distribution using the global model for pseudo-labeling.
         
@@ -436,7 +436,7 @@ class PseudoClassBalancedConfidenceSampler:
         self.global_class_distribution = self.estimate_global_distribution(
             model=model_server,  # Use server model
             dataset=dataset,
-            sample_size=2000,  # Use more samples for a better estimate
+            sample_size=10000,  # Use more samples for a better estimate
             seed=42 + (client_id if seed is None else seed) + self.client_cycles.get(client_id, 0)*100  # Different seed per client and cycle
         )
         
