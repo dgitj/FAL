@@ -2,15 +2,21 @@
 '''
 
 # Dataset selection
-DATASET = "SVHN"  # Options are "CIFAR10" and "SVHN"
+DATASET = "CIFAR100"  # Options are "CIFAR10", "SVHN", and "CIFAR100"
 
-# directory paths for datasets
+# directory paths for datasets and number of classes
 if DATASET == "CIFAR10":
     DATA_ROOT = 'data/cifar-10-batches-py'
+    NUM_CLASSES = 10
 elif DATASET == "SVHN":
     DATA_ROOT = 'data/svhn'
+    NUM_CLASSES = 10
+elif DATASET == "CIFAR100":
+    DATA_ROOT = 'data/cifar-100-python'
+    NUM_CLASSES = 100
 else:
     DATA_ROOT = 'data/cifar-10-batches-py'  # Default fallback
+    NUM_CLASSES = 10
 
 # Active Learning Strategy Options:
 # - "KAFAL"
