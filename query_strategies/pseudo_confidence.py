@@ -24,8 +24,7 @@ class PseudoClassBalancedConfidenceSampler:
             
         self.debug = True  # Enable detailed debugging
         
-        # We'll estimate the global class distribution from data in each cycle
-        # so we don't need to initialize it here
+        # We'll estimate the global class distribution from labeled data in each cycle
         self.global_class_distribution = None
         print(f"[PseudoConfidence] Using device: {self.device}")
         
@@ -33,77 +32,68 @@ class PseudoClassBalancedConfidenceSampler:
         self.client_cycles = {}
         self.client_labeled_sets = {}
 
-    def estimate_global_distribution(self, model, dataset, sample_size=10000, seed=42):
+    def calculate_local_class_distribution(self, labeled_set, dataset):
         """
-        Estimate the global class distribution using the global model for pseudo-labeling.
+        Calculate the class distribution of labeled samples on this client.
         
         Args:
-            model (torch.nn.Module): The global model to use for pseudo-labeling.
-            dataset: The full dataset.
-            sample_size (int): Number of samples to use for estimating distribution.
-            seed (int): Random seed for reproducibility.
+            labeled_set (list): Indices of labeled samples on this client
+            dataset: Dataset containing the samples and labels
             
         Returns:
-            dict: Estimated global class distribution.
+            dict: Counts of samples for each class
         """
-        print(f"[PseudoConfidence] Estimating global class distribution using {sample_size} samples")
+        class_counts = {cls: 0 for cls in range(config.NUM_CLASSES)}
         
-        # Set random seed for reproducibility
-        np.random.seed(seed)
+        # Count samples per class using ground truth labels
+        for idx in labeled_set:
+            _, label = dataset[idx]
+            class_counts[label] += 1
         
-        # Sample random indices from the dataset
-        all_indices = list(range(len(dataset)))
-        sampled_indices = np.random.choice(all_indices, min(sample_size, len(dataset)), replace=False)
+        print("[PseudoConfidence] Local class distribution from true labels:")
+        for cls in range(config.NUM_CLASSES):
+            percentage = (class_counts.get(cls, 0) / len(labeled_set) * 100) if len(labeled_set) > 0 else 0
+            print(f"  Class {cls}: {class_counts.get(cls, 0)} samples ({percentage:.1f}%)")
+            
+        return class_counts
+
+    def aggregate_class_distributions(self, client_distributions):
+        """
+        Aggregate class distributions from all clients.
         
-        # Create a loader for the sampled data
-        sampler = SubsetSequentialSampler(sampled_indices)
-        loader = DataLoader(
-            dataset,
-            batch_size=64,
-            sampler=sampler,
-            num_workers=2,
-            pin_memory=True
-        )
+        Args:
+            client_distributions (list): List of dictionaries, each containing
+                                        class counts from one client
         
-        # Collect predictions
-        model.eval()
-        all_preds = []
-        all_confidence = []
+        Returns:
+            dict: Global class distribution percentages
         
-        with torch.no_grad():
-            for inputs, _ in loader:
-                inputs = inputs.to(self.device)
-                
-                # Get model predictions
-                outputs = model(inputs)
-                if isinstance(outputs, tuple):
-                    outputs = outputs[0]
-                
-                # Get predicted classes and confidence scores
-                probs = F.softmax(outputs, dim=1)
-                confidence, preds = torch.max(probs, dim=1)
-                
-                all_preds.extend(preds.cpu().numpy())
-                all_confidence.extend(confidence.cpu().numpy())
+        Raises:
+            ValueError: If no labeled samples are available across all clients
+        """
+        # Initialize global counts
+        global_counts = {cls: 0 for cls in range(config.NUM_CLASSES)}
         
-        # Convert to numpy arrays
-        all_preds = np.array(all_preds)
-        all_confidence = np.array(all_confidence)
+        # Aggregate counts from all clients
+        for dist in client_distributions:
+            for cls, count in dist.items():
+                global_counts[cls] += count
         
-        # Count occurrences of each class
-        class_counts = {}
-        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
-            class_counts[cls] = np.sum(all_preds == cls)
+        # Calculate percentages
+        total_samples = sum(global_counts.values())
+        if total_samples > 0:
+            global_distribution = {cls: count / total_samples 
+                                for cls, count in global_counts.items()}
+        else:
+            # Return error if no labeled samples are available
+            raise ValueError("[PseudoConfidence] Error: No labeled samples available for distribution estimation")
         
-        # Calculate distribution
-        total_samples = len(all_preds)
-        distribution = {cls: count / total_samples for cls, count in class_counts.items()}
+        # Print the estimated distribution
+        print("[PseudoConfidence] Estimated global class distribution from labeled data:")
+        for cls in range(config.NUM_CLASSES):
+            print(f"  Class {cls}: {global_distribution[cls]:.4f} ({global_counts[cls]} samples)")
         
-        print("[PseudoConfidence] Estimated global class distribution:")
-        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
-            print(f"  Class {cls}: {distribution[cls]:.4f} ({class_counts[cls]} samples)")
-        
-        return distribution
+        return global_distribution
 
     def compute_target_counts(self, current_distribution, num_samples, labeled_set_size, available_classes):
         """
@@ -121,10 +111,9 @@ class PseudoClassBalancedConfidenceSampler:
         target_counts = {}
         future_size = labeled_set_size + num_samples
         
-        # Safety check - if global_class_distribution is not set yet, use uniform distribution
+        # Safety check - if global_class_distribution is not set
         if self.global_class_distribution is None:
-            self.global_class_distribution = {i: 1.0/config.NUM_CLASSES for i in range(config.NUM_CLASSES)}
-            print(f"[PseudoConfidence] Using uniform distribution as fallback")
+            raise ValueError("[PseudoConfidence] Error: Global class distribution not available")
         
         if self.debug:
             print(f"[PseudoConfidence] Planning to select {num_samples} samples")
@@ -389,7 +378,7 @@ class PseudoClassBalancedConfidenceSampler:
         
         return indices, pseudo_labels, confidence_scores, entropy_scores
 
-    def select_samples(self, model, model_server, unlabeled_loader, client_id, unlabeled_set, num_samples, labeled_set=None, seed=None):
+    def select_samples(self, model, model_server, unlabeled_loader, client_id, unlabeled_set, num_samples, labeled_set=None, seed=None, global_class_distribution=None):
         """
         Selects samples using pseudo-class-balanced confidence-based sampling.
         
@@ -410,7 +399,7 @@ class PseudoClassBalancedConfidenceSampler:
             print(f"\n[PseudoConfidence] Client {client_id}: Selecting {num_samples} samples")
             print(f"[PseudoConfidence] Unlabeled pool size: {len(unlabeled_set)}")
         
-        # Get dataset for accessing labels (only for statistics)
+        # Get dataset for accessing labels
         dataset = unlabeled_loader.dataset
 
         # Use the provided labeled_set which should always be passed
@@ -432,14 +421,23 @@ class PseudoClassBalancedConfidenceSampler:
         if client_id not in self.client_labeled_sets:
             self.client_labeled_sets[client_id] = []
         
-        # Step 1: Estimate global class distribution using the server model every cycle
-        print(f"[PseudoConfidence] Cycle {self.client_cycles.get(client_id, 0)} - Estimating global distribution")
-        self.global_class_distribution = self.estimate_global_distribution(
-            model=model_server,  # Use server model
-            dataset=dataset,
-            sample_size=10000,  # Use more samples for a better estimate
-            seed=42 + (client_id if seed is None else seed) + self.client_cycles.get(client_id, 0)*100  # Different seed per client and cycle
-        )
+        # Calculate local class distribution using true labels
+        print(f"[PseudoConfidence] Cycle {self.client_cycles.get(client_id, 0)} - Calculating local class distribution")
+        local_distribution = self.calculate_local_class_distribution(labeled_set, dataset)
+        
+        # Use the global distribution provided by the trainer if available
+        if global_class_distribution is not None:
+            self.global_class_distribution = global_class_distribution
+            print("[PseudoConfidence] Using global class distribution from trainer")
+            
+            # Print the global distribution
+            print("[PseudoConfidence] Global class distribution:")
+            for cls in range(config.NUM_CLASSES):
+                percentage = global_class_distribution.get(cls, 0) * 100
+                print(f"  Class {cls}: {percentage:.2f}%") 
+        else:
+            # If global distribution is not available, raise an error
+            raise ValueError("[PseudoConfidence] Error: Global class distribution not provided. Cannot proceed without global distribution.")
         
         # Step 2: Get labeled sample class distribution using pseudo-labels from the server model
         labeled_pseudo_counts = {i: 0 for i in range(config.NUM_CLASSES)}

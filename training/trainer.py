@@ -167,6 +167,10 @@ class FederatedTrainer:
         self.config = config
         self.logger = logger
         self.iters = 0  # Training iteration counter
+        
+        # Add class distribution tracking
+        self.client_class_distributions = {}
+        self.global_class_distribution = None
     
     def train(self, models, criterion, optimizers, schedulers, dataloaders, num_epochs, trial_seed, val_loader=None, max_rounds=None):
         """
@@ -717,3 +721,63 @@ class FederatedTrainer:
             data_num (np.ndarray): Number of samples per client
         """
         self.data_num = data_num
+        
+    def aggregate_class_distributions(self):
+        """
+        Aggregate class distributions from all clients to estimate global distribution.
+        
+        Returns:
+            dict: Global class distribution percentages
+        """
+        if not self.client_class_distributions:
+            return None
+            
+        # Initialize global counts
+        global_counts = {cls: 0 for cls in range(self.config.NUM_CLASSES)}
+        
+        # Aggregate counts from all clients
+        for dist in self.client_class_distributions.values():
+            for cls, count in dist.items():
+                global_counts[cls] += count
+        
+        # Calculate percentages
+        total_samples = sum(global_counts.values())
+        if total_samples > 0:
+            self.global_class_distribution = {
+                cls: count / total_samples 
+                for cls, count in global_counts.items()
+            }
+            
+            print("[Trainer] Global class distribution from all clients:")
+            for cls in range(self.config.NUM_CLASSES):
+                print(f"  Class {cls}: {self.global_class_distribution[cls]:.4f} ({global_counts[cls]} samples)")
+                
+            return self.global_class_distribution
+        else:
+            return None
+    
+    def update_client_distribution(self, client_id, labeled_set, dataset):
+        """
+        Calculate and store class distribution for a client.
+        
+        Args:
+            client_id (int): Client identifier
+            labeled_set (list): List of indices of labeled samples
+            dataset: Dataset containing samples
+            
+        Returns:
+            dict: Class distribution for this client
+        """
+        class_counts = {cls: 0 for cls in range(self.config.NUM_CLASSES)}
+        
+        # Count samples per class using ground truth labels
+        for idx in labeled_set:
+            _, label = dataset[idx]
+            class_counts[label] += 1
+            
+        self.client_class_distributions[client_id] = class_counts
+        return class_counts
+    
+    def get_global_distribution(self):
+        """Returns the current global distribution"""
+        return self.global_class_distribution
