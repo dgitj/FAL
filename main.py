@@ -451,6 +451,22 @@ def main():
         trainer.set_loss_weights(loss_weight_list)
         trainer.set_data_num(data_num)
         
+        # Calculate initial class distributions and variance analysis (only once)
+        print("\n===== Initial Class Distribution Analysis =====")
+        for c in range(config.CLIENTS):
+            trainer.update_client_distribution(c, labeled_set_list[c], cifar10_train)
+        
+        # Analyze variance across clients
+        variance_stats = trainer.analyze_class_distribution_variance()
+        
+        # Calculate global class distribution
+        global_distribution = trainer.aggregate_class_distributions()
+        
+        # Check if PseudoConfidence needs global distribution
+        if config.ACTIVE_LEARNING_STRATEGY == "PseudoConfidence" and global_distribution is None:
+            raise ValueError("Error: PseudoConfidence strategy requires global class distribution, but none was computed. "
+                            "Make sure there are labeled samples available on all clients.")
+        
         # Active learning cycles
         for cycle in range(config.CYCLES):
             # Create server model
@@ -532,27 +548,6 @@ def main():
             data_num = []
             loss_weight_list_2 = []
             server_state_dict = models['server'].state_dict()
-            
-            # Log model distances at beginning of cycle
-            if cycle == 0:
-                model_distances = {}
-                for c in range(config.CLIENTS):
-                    distance = logger.calculate_model_distance(models['clients'][c], models['server'])
-                    model_distances[c] = distance
-                
-                logger.log_model_distances(cycle, model_distances)
-            
-            # Before sample selection, update all clients' class distributions in trainer
-            for c in range(config.CLIENTS):
-                trainer.update_client_distribution(c, labeled_set_list[c], cifar10_train)
-            
-            # Aggregate class distributions at server level
-            global_distribution = trainer.aggregate_class_distributions()
-            
-            # Check if PseudoConfidence needs global distribution
-            if config.ACTIVE_LEARNING_STRATEGY == "PseudoConfidence" and global_distribution is None:
-                raise ValueError("Error: PseudoConfidence strategy requires global class distribution, but none was computed. "
-                                "Make sure there are labeled samples available on all clients.")
             
             # Sample for annotations
             for c in range(config.CLIENTS):
