@@ -55,13 +55,13 @@ def parse_arguments():
     parser.add_argument('--seed', type=int, help='Random seed')
     parser.add_argument('--max-rounds', type=int, help='Maximum communication rounds per cycle')
     parser.add_argument('--check-convergence', action='store_true', help='Monitor convergence before AL starts')
-    parser.add_argument('--dataset', type=str, choices=['CIFAR10', 'SVHN'], help='Dataset to use')
+    parser.add_argument('--dataset', type=str, choices=['CIFAR10', 'SVHN', 'CIFAR100'], help='Dataset to use')
     return parser.parse_args()
 
 
 def load_datasets():
-    """Load and prepare datasets (CIFAR10 or SVHN)."""
-    from torchvision.datasets import CIFAR10, SVHN
+    """Load and prepare datasets (CIFAR10, SVHN, or CIFAR100)."""
+    from torchvision.datasets import CIFAR10, SVHN, CIFAR100
     import torchvision.transforms as T
 
     dataset_name = config.DATASET
@@ -104,6 +104,26 @@ def load_datasets():
         train_dataset = SVHN(dataset_dir, split='train', download=True, transform=train_transform)
         test_dataset = SVHN(dataset_dir, split='test', download=True, transform=test_transform)
         select_dataset = SVHN(dataset_dir, split='train', download=True, transform=test_transform)
+        
+    elif dataset_name == "CIFAR100":
+        train_transform = T.Compose([
+            T.RandomHorizontalFlip(),
+            T.RandomCrop(size=32, padding=4),
+            T.ToTensor(),
+            T.Normalize([0.5071, 0.4867, 0.4408], [0.2675, 0.2565, 0.2761])
+        ])
+
+        test_transform = T.Compose([
+            T.ToTensor(),
+            T.Normalize([0.5071, 0.4867, 0.4408], [0.2675, 0.2565, 0.2761])
+        ])
+
+        dataset_dir = config.DATA_ROOT
+        
+        # Load datasets
+        train_dataset = CIFAR100(dataset_dir, train=True, download=True, transform=train_transform)
+        test_dataset = CIFAR100(dataset_dir, train=False, download=True, transform=test_transform)
+        select_dataset = CIFAR100(dataset_dir, train=True, download=True, transform=test_transform)
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
         
@@ -197,9 +217,14 @@ def main():
         # Update DATA_ROOT based on dataset
         if config.DATASET == "CIFAR10":
             config.DATA_ROOT = 'data/cifar-10-batches-py'
+            config.NUM_CLASSES = 10
         elif config.DATASET == "SVHN":
             config.DATA_ROOT = 'data/svhn'
-        print(f"Using dataset: {config.DATASET}")
+            config.NUM_CLASSES = 10
+        elif config.DATASET == "CIFAR100":
+            config.DATA_ROOT = 'data/cifar-100-python'
+            config.NUM_CLASSES = 100
+        print(f"Using dataset: {config.DATASET} with {config.NUM_CLASSES} classes")
     
     if args.cycles:
         config.CYCLES = args.cycles
@@ -280,7 +305,7 @@ def main():
         logger = FederatedALLogger(
             strategy_name=config.ACTIVE_LEARNING_STRATEGY,
             num_clients=config.CLIENTS,
-            num_classes=10,
+            num_classes=config.NUM_CLASSES,
             trial_id=trial+1 
         )
         
@@ -289,7 +314,7 @@ def main():
         unlabeled_set_list = []
         private_train_loaders = []
         private_unlab_loaders = []
-        num_classes = 10
+        num_classes = config.NUM_CLASSES
         
         print('Query Strategy:', config.ACTIVE_LEARNING_STRATEGY)
         #print('Number of clients:', config.CLIENTS)
@@ -397,7 +422,7 @@ def main():
         strategy_manager = StrategyManager(**strategy_params)
         
         # If using strategies that need labeled set list or total clients
-        if config.ACTIVE_LEARNING_STRATEGY in ["GlobalOptimal", "CoreSetGlobalOptimal", "CoreSet", "SSLEntropy", "PseudoEntropy", "PseudoConfidence"]:
+        if config.ACTIVE_LEARNING_STRATEGY in ["GlobalOptimal", "CoreSetGlobalOptimal", "CoreSet", "PseudoEntropy", "PseudoConfidence"]:
             strategy_manager.set_total_clients(config.CLIENTS)
             strategy_manager.set_labeled_set_list(labeled_set_list)
 

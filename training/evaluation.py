@@ -5,6 +5,7 @@ Provides functions for testing model performance and analyzing per-class metrics
 
 import torch
 import numpy as np
+import config  # Import config module for NUM_CLASSES
 
 
 def evaluate_model(model, dataloader, device, mode='test'):
@@ -43,7 +44,7 @@ def evaluate_model(model, dataloader, device, mode='test'):
     return 100 * correct / total
 
 
-def evaluate_per_class_accuracy(model, test_loader, device, num_classes=10):
+def evaluate_per_class_accuracy(model, test_loader, device, num_classes=None):
     """
     Evaluate accuracy for each class separately.
     
@@ -51,11 +52,14 @@ def evaluate_per_class_accuracy(model, test_loader, device, num_classes=10):
         model (torch.nn.Module): The model to evaluate
         test_loader (DataLoader): DataLoader containing test data
         device (torch.device): Device to run evaluation on
-        num_classes (int): Number of classes in the dataset
+        num_classes (int, optional): Number of classes in the dataset. If None, uses config.NUM_CLASSES
         
     Returns:
         dict: Dictionary mapping class indices to their accuracy percentages
     """
+    if num_classes is None:
+        num_classes = config.NUM_CLASSES  # Use config value if not provided
+        
     model.eval()
     class_correct = np.zeros(num_classes)
     class_total = np.zeros(num_classes)
@@ -158,7 +162,7 @@ def evaluate_gradient_alignment(local_model, global_model, dataloader, device):
     return mean_alignment, mean_conflict
 
 
-def evaluate_knowledge_gap(local_model, global_model, dataloader, device, num_classes=10):
+def evaluate_knowledge_gap(local_model, global_model, dataloader, device, num_classes=None):
     """
     Measure knowledge gap between local and global models.
     Compares performance and uncertainty metrics between models.
@@ -168,11 +172,14 @@ def evaluate_knowledge_gap(local_model, global_model, dataloader, device, num_cl
         global_model (torch.nn.Module): Global server model
         dataloader (DataLoader): DataLoader for evaluation
         device (torch.device): Device to run evaluation on
-        num_classes (int): Number of classes in the dataset
+        num_classes (int, optional): Number of classes in the dataset. If None, uses config.NUM_CLASSES
         
     Returns:
         dict: Dictionary with class-wise metrics comparing local and global models
     """
+    if num_classes is None:
+        num_classes = config.NUM_CLASSES  # Use config value if not provided
+        
     local_model.eval()
     global_model.eval()
     
@@ -243,7 +250,7 @@ def evaluate_knowledge_gap(local_model, global_model, dataloader, device, num_cl
     return results
 
 
-def create_confusion_matrix(model, dataloader, device, num_classes=10):
+def create_confusion_matrix(model, dataloader, device, num_classes=None):
     """
     Generate confusion matrix for model predictions.
     
@@ -251,11 +258,14 @@ def create_confusion_matrix(model, dataloader, device, num_classes=10):
         model (torch.nn.Module): Model to evaluate
         dataloader (DataLoader): DataLoader for evaluation
         device (torch.device): Device to run evaluation on
-        num_classes (int): Number of classes
+        num_classes (int, optional): Number of classes. If None, uses config.NUM_CLASSES
         
     Returns:
         numpy.ndarray: Confusion matrix where rows are true labels and columns are predicted labels
     """
+    if num_classes is None:
+        num_classes = config.NUM_CLASSES  # Use config value if not provided
+        
     model.eval()
     confusion = np.zeros((num_classes, num_classes), dtype=int)
     
