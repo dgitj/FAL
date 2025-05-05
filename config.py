@@ -1,8 +1,16 @@
 ''' Configuration File.
 '''
 
-# directory
-DATA_ROOT = 'data/cifar-10-batches-py'
+# Dataset selection
+DATASET = "SVHN"  # Options are "CIFAR10" and "SVHN"
+
+# directory paths for datasets
+if DATASET == "CIFAR10":
+    DATA_ROOT = 'data/cifar-10-batches-py'
+elif DATASET == "SVHN":
+    DATA_ROOT = 'data/svhn'
+else:
+    DATA_ROOT = 'data/cifar-10-batches-py'  # Default fallback
 
 # Active Learning Strategy Options:
 # - "KAFAL"
@@ -37,7 +45,8 @@ RATIO=0.8
 CLIENTS=10
 TRIALS=1
 LOCAL_MODEL_UPDATE = "DebiasedContrastive" # Options are "Vanilla", "SimpleContrastive", "DebiasedContrastive", and "KFCU"  
-DATATSET = "CIFAR10" # Options are "CIFAR10" and "SVHN"
+# This is now set at the top of the file
+# DATASET = "CIFAR10" # Options are "CIFAR10" and "SVHN"
 
 # Simple Contrastive Loss settings
 CONTRASTIVE_TEMPERATURE = 0.5

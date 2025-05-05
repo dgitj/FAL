@@ -20,8 +20,6 @@ import matplotlib.pyplot as plt
 # Import models
 import models.preact_resnet as resnet
 
-# Import feature visualization
-from training.feature_visualization import visualize_feature_space, compare_feature_spaces
 
 # Import data utilities
 from data.dirichlet_partitioner import dirichlet_balanced_partition
@@ -57,35 +55,59 @@ def parse_arguments():
     parser.add_argument('--seed', type=int, help='Random seed')
     parser.add_argument('--max-rounds', type=int, help='Maximum communication rounds per cycle')
     parser.add_argument('--check-convergence', action='store_true', help='Monitor convergence before AL starts')
+    parser.add_argument('--dataset', type=str, choices=['CIFAR10', 'SVHN'], help='Dataset to use')
     return parser.parse_args()
 
 
 def load_datasets():
-    """Load and prepare CIFAR10 datasets."""
-    # CIFAR10 transformations
-    from torchvision.datasets import CIFAR10
+    """Load and prepare datasets (CIFAR10 or SVHN)."""
+    from torchvision.datasets import CIFAR10, SVHN
     import torchvision.transforms as T
 
-    cifar10_train_transform = T.Compose([
-        T.RandomHorizontalFlip(),
-        T.RandomCrop(size=32, padding=4),
-        T.ToTensor(),
-        T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
-    ])
+    dataset_name = config.DATASET
 
-    cifar10_test_transform = T.Compose([
-        T.ToTensor(),
-        T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
-    ])
+    if dataset_name == "CIFAR10":
+        train_transform = T.Compose([
+            T.RandomHorizontalFlip(),
+            T.RandomCrop(size=32, padding=4),
+            T.ToTensor(),
+            T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
+        ])
 
-    cifar10_dataset_dir = config.DATA_ROOT
+        test_transform = T.Compose([
+            T.ToTensor(),
+            T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
+        ])
 
-    # Load datasets
-    cifar10_train = CIFAR10(cifar10_dataset_dir, train=True, download=True, transform=cifar10_train_transform)
-    cifar10_test = CIFAR10(cifar10_dataset_dir, train=False, download=True, transform=cifar10_test_transform)
-    cifar10_select = CIFAR10(cifar10_dataset_dir, train=True, download=True, transform=cifar10_test_transform)
+        dataset_dir = config.DATA_ROOT
+        
+        # Load datasets
+        train_dataset = CIFAR10(dataset_dir, train=True, download=True, transform=train_transform)
+        test_dataset = CIFAR10(dataset_dir, train=False, download=True, transform=test_transform)
+        select_dataset = CIFAR10(dataset_dir, train=True, download=True, transform=test_transform)
+        
+    elif dataset_name == "SVHN":
+        train_transform = T.Compose([
+            T.RandomCrop(size=32, padding=4),
+            T.ToTensor(),
+            T.Normalize([0.4377, 0.4438, 0.4728], [0.1980, 0.2010, 0.1970])
+        ])
 
-    return cifar10_train, cifar10_test, cifar10_select
+        test_transform = T.Compose([
+            T.ToTensor(),
+            T.Normalize([0.4377, 0.4438, 0.4728], [0.1980, 0.2010, 0.1970])
+        ])
+
+        dataset_dir = config.DATA_ROOT
+        
+        # Load datasets
+        train_dataset = SVHN(dataset_dir, split='train', download=True, transform=train_transform)
+        test_dataset = SVHN(dataset_dir, split='test', download=True, transform=test_transform)
+        select_dataset = SVHN(dataset_dir, split='train', download=True, transform=test_transform)
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset_name}")
+        
+    return train_dataset, test_dataset, select_dataset
 
 
 def create_test_loader(dataset, trial_seed, batch_size=config.BATCH):
@@ -169,6 +191,16 @@ def main():
         config.ACTIVE_LEARNING_STRATEGY = args.strategy
         print(f"Using strategy: {config.ACTIVE_LEARNING_STRATEGY}")
     
+    # Add dataset selection
+    if args.dataset:
+        config.DATASET = args.dataset
+        # Update DATA_ROOT based on dataset
+        if config.DATASET == "CIFAR10":
+            config.DATA_ROOT = 'data/cifar-10-batches-py'
+        elif config.DATASET == "SVHN":
+            config.DATA_ROOT = 'data/svhn'
+        print(f"Using dataset: {config.DATASET}")
+    
     if args.cycles:
         config.CYCLES = args.cycles
         print(f"Setting cycles to: {config.CYCLES}")
@@ -223,8 +255,14 @@ def main():
     accuracies = [[] for _ in range(config.TRIALS)]
     
     # Extract all labels
-    indices = list(range(config.NUM_TRAIN))
-    id2lab = [cifar10_train[id][1] for id in indices]
+    indices = list(range(len(cifar10_train)))
+    if config.DATASET == "CIFAR10":
+        id2lab = [cifar10_train[id][1] for id in indices]
+    elif config.DATASET == "SVHN":
+        # For SVHN, we need to use the labels attribute directly
+        id2lab = [cifar10_train.labels[id] for id in indices]
+    else:
+        id2lab = [cifar10_train[id][1] for id in indices]  # Default to CIFAR10 format
     id2lab = np.array(id2lab)
     
     # Run trials
@@ -587,25 +625,6 @@ def main():
             
             # Save logs
             logger.save_data()
-            
-            # Visualize feature space (only at the beginning and end of training)
-            if cycle == 0 or cycle == config.CYCLES - 1:
-                print("\nGenerating feature space visualization...")
-                # Create directory for visualizations
-                method_name = config.LOCAL_MODEL_UPDATE
-                viz_path = os.path.join(viz_dir, f"{method_name}_trial_{trial+1}_cycle_{cycle+1}.png")
-                
-                # Generate visualization for server model only
-                visualize_feature_space(
-                    models['server'],
-                    dataloaders['test'],
-                    device,
-                    title=f"Server Model Feature Space - {method_name} (Cycle {cycle+1})",
-                    output_path=viz_path,
-                    max_samples=1000  # Limit samples for faster visualization
-                )
-                
-                print(f"Visualization saved to {viz_path}")
         
         print('Accuracies for trial {}:'.format(trial), accuracies[trial])
 
