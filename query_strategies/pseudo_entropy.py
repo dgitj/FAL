@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from data.sampler import SubsetSequentialSampler
+import config  # Import config to access NUM_CLASSES
 
 class PseudoClassBalancedEntropySampler:
     def __init__(self, device="cuda", confidence_threshold=0.0):
@@ -97,7 +98,7 @@ class PseudoClassBalancedEntropySampler:
         
         # Count occurrences of each class
         class_counts = {}
-        for cls in range(10):  # Assuming 10 classes (CIFAR-10)
+        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
             class_counts[cls] = np.sum(high_confidence_preds == cls)
         
         # Calculate distribution
@@ -105,7 +106,7 @@ class PseudoClassBalancedEntropySampler:
         distribution = {cls: count / total_samples for cls, count in class_counts.items()}
         
         print("[PseudoEntropy] Estimated global class distribution:")
-        for cls in range(10):
+        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
             print(f"  Class {cls}: {distribution[cls]:.4f} ({class_counts[cls]} samples)")
         
         return distribution
@@ -128,7 +129,7 @@ class PseudoClassBalancedEntropySampler:
         
         # Safety check - if global_class_distribution is not set yet, use uniform distribution
         if self.global_class_distribution is None:
-            self.global_class_distribution = {i: 1.0/len(available_classes) for i in available_classes}
+            self.global_class_distribution = {i: 1.0/config.NUM_CLASSES for i in range(config.NUM_CLASSES)}
             print(f"[PseudoEntropy] Using uniform distribution as fallback")
         
         if self.debug:
@@ -382,11 +383,11 @@ class PseudoClassBalancedEntropySampler:
         
         # Count pseudo-labels by class
         pseudo_counts = {}
-        for cls in range(10):
+        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
             pseudo_counts[cls] = np.sum(pseudo_labels == cls)
         
         print(f"[PseudoEntropy] Pseudo-label distribution:")
-        for cls in range(10):
+        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
             count = pseudo_counts[cls]
             percentage = count / len(pseudo_labels) * 100 if len(pseudo_labels) > 0 else 0
             avg_confidence = np.mean(confidence_scores[pseudo_labels == cls]) if count > 0 else 0
@@ -399,11 +400,11 @@ class PseudoClassBalancedEntropySampler:
         
         # Count confident samples by class
         confident_counts = {}
-        for cls in range(10):
+        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
             confident_counts[cls] = np.sum((pseudo_labels == cls) & confident_mask)
         
         print(f"[PseudoEntropy] High-confidence pseudo-label distribution:")
-        for cls in range(10):
+        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
             count = confident_counts[cls]
             percentage = count / num_confident * 100 if num_confident > 0 else 0
             print(f"  Class {cls}: {count} samples ({percentage:.1f}%)")
@@ -463,7 +464,7 @@ class PseudoClassBalancedEntropySampler:
         )
         
         # Step 2: Get labeled sample class distribution using pseudo-labels from the server model
-        labeled_pseudo_counts = {i: 0 for i in range(10)}
+        labeled_pseudo_counts = {i: 0 for i in range(config.NUM_CLASSES)}
         total_labeled = len(labeled_set)
         
         if total_labeled > 0:
@@ -490,12 +491,12 @@ class PseudoClassBalancedEntropySampler:
             
             # Print the labeled set pseudo-class distribution
             print(f"[PseudoEntropy] Labeled set pseudo-class distribution:")
-            for cls in range(10):
+            for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
                 percentage = (labeled_pseudo_counts.get(cls, 0) / total_labeled * 100) if total_labeled > 0 else 0
                 print(f"  Class {cls}: {labeled_pseudo_counts.get(cls, 0)} samples ({percentage:.1f}%)")
         
         # Calculate the current class distribution percentages
-        current_distribution = {cls: count/total_labeled for cls, count in labeled_pseudo_counts.items()} if total_labeled > 0 else {cls: 0 for cls in range(10)}
+        current_distribution = {cls: count/total_labeled for cls, count in labeled_pseudo_counts.items()} if total_labeled > 0 else {cls: 0 for cls in range(config.NUM_CLASSES)}
         
         # Step 3: Generate pseudo-labels for unlabeled set
         indices, pseudo_labels, confidence_scores, entropy_scores = self.pseudo_label_data(
@@ -644,11 +645,11 @@ class PseudoClassBalancedEntropySampler:
                 selected_pseudo_classes.append(-1)  # Unknown class if not found
         
         final_class_counts = {}
-        for cls in range(10):
+        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
             final_class_counts[cls] = sum(1 for label in selected_pseudo_classes if label == cls)
         
         print(f"\n[PseudoEntropy] Final selection pseudo-class distribution:")
-        for cls in range(10):
+        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
             count = final_class_counts.get(cls, 0)
             percentage = count / len(selected_samples) * 100 if len(selected_samples) > 0 else 0
             target = target_counts.get(cls, 0)
@@ -659,18 +660,18 @@ class PseudoClassBalancedEntropySampler:
         # Calculate the new distribution after this selection
         future_distribution = {}
         future_size = total_labeled + len(selected_samples)
-        for cls in range(10):
+        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
             # Add newly selected samples to current distribution
             future_distribution[cls] = (labeled_pseudo_counts.get(cls, 0) + final_class_counts.get(cls, 0)) / future_size
         
         # Calculate how close we got to the global distribution
-        dist_error = sum(abs(future_distribution.get(cls, 0) - self.global_class_distribution[cls]) for cls in range(10)) / 2
+        dist_error = sum(abs(future_distribution.get(cls, 0) - self.global_class_distribution.get(cls, 0)) for cls in range(config.NUM_CLASSES)) / 2
         print(f"[PseudoEntropy] Distribution error after selection: {dist_error:.4f} (lower is better)")
         
         # Display improvement compared to initial distribution
         if total_labeled > 0:
             initial_distribution = {cls: count/total_labeled for cls, count in labeled_pseudo_counts.items()}
-            initial_error = sum(abs(initial_distribution.get(cls, 0) - self.global_class_distribution[cls]) for cls in range(10)) / 2
+            initial_error = sum(abs(initial_distribution.get(cls, 0) - self.global_class_distribution.get(cls, 0)) for cls in range(config.NUM_CLASSES)) / 2
             improvement = initial_error - dist_error
             print(f"[PseudoEntropy] Initial error: {initial_error:.4f}, Improvement: {improvement:.4f} ({improvement/initial_error*100:.1f}% better)")
         
