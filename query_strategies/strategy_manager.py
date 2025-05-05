@@ -105,7 +105,7 @@ class StrategyManager:
             
         print(f"{strategy_name} strategy initialized successfully")
         
-    def select_samples(self, model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, seed=None):
+    def select_samples(self, model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, labeled_set=None, seed=None, global_class_distribution=None):
         """
         Select samples using the specified active learning strategy.
         
@@ -116,6 +116,9 @@ class StrategyManager:
             c: Client ID (only used for KAFAL)
             unlabeled_set: List of unlabeled sample indices
             num_samples: Number of samples to select
+            labeled_set: List of labeled sample indices (optional)
+            seed: Random seed for reproducibility (optional)
+            global_class_distribution: Global class distribution from server (optional)
             
         Returns:
             tuple: (selected_samples, remaining_unlabeled)
@@ -149,22 +152,28 @@ class StrategyManager:
             if self.labeled_set_list is not None and c < len(self.labeled_set_list):
                 labeled_set = self.labeled_set_list[c]
             return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, labeled_set=labeled_set, seed=seed)
-        elif self.strategy_name in ["GlobalOptimal", "CoreSetGlobalOptimal", "PseudoEntropy", "PseudoConfidence"]:
-          # These strategies need both models, client ID, and access to true labels
-          labeled_set = None
-          if self.labeled_set_list is not None and c < len(self.labeled_set_list):
-              labeled_set = self.labeled_set_list[c]         
-          # If this is the last client to be processed, allocate budget globally
-          if self.clients_processed >= self.total_clients:
-              # Reset counter for next round
-              self.clients_processed = 0
-              
-              # Allocate budget across all clients
-            #  client_ids = list(range(self.total_clients))
-             # total_budget = num_samples * self.total_clients  # Total budget across all clients
-             # self.sampler.allocate_global_budget(client_ids, total_budget)
-          
-          # Select samples based on global allocation
-          return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, labeled_set=labeled_set, seed=seed)    
+        elif self.strategy_name == "PseudoConfidence":
+            # PseudoConfidence strategy needs global class distribution
+            if labeled_set is None and self.labeled_set_list is not None and c < len(self.labeled_set_list):
+                labeled_set = self.labeled_set_list[c]
+                
+            # Pass global class distribution to PseudoConfidence strategy
+            return self.sampler.select_samples(
+                model, model_server, unlabeled_loader, c, unlabeled_set, 
+                num_samples, labeled_set=labeled_set, seed=seed,
+                global_class_distribution=global_class_distribution
+            )
+            
+        elif self.strategy_name in ["GlobalOptimal", "CoreSetGlobalOptimal", "PseudoEntropy"]:
+            # These strategies need both models, client ID, and access to true labels
+            if labeled_set is None and self.labeled_set_list is not None and c < len(self.labeled_set_list):
+                labeled_set = self.labeled_set_list[c]         
+            # If this is the last client to be processed, allocate budget globally
+            if self.clients_processed >= self.total_clients:
+                # Reset counter for next round
+                self.clients_processed = 0
+            
+            # Select samples based on global allocation
+            return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, labeled_set=labeled_set, seed=seed)    
         else:
             raise ValueError(f"Unknown strategy: {self.strategy_name}")
