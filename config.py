@@ -29,10 +29,14 @@ else:
 # - "GlobalOptimal"
 # - "CoreSet"
 # - "CoreSetGlobalOptimal"
-# - "PseudoEntropy"
 # - "PseudoConfidence"
+# - "AdaptiveEntropy"
+# - "HybridEntropyKAFAL"
+# - "HybridEntropyKAFALEntropyFirst"
+# - "HybridEntropyKAFALClassDifferentiated"
+# - "AblationClassUncertainty"
 
-ACTIVE_LEARNING_STRATEGY = "PseudoConfidence"
+ACTIVE_LEARNING_STRATEGY = "HybridEntropyKAFALClassDifferentiated"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "GlobalOptimal", "CoreSet", "CoreSetGlobalOptimal", "PseudoConfidence", "AdaptiveEntropy", "HybridEntropyKAFAL", "HybridEntropyKAFALEntropyFirst", "HybridEntropyKAFALClassDifferentiated", and "AblationClassUncertainty"
 
 # random seed
 SEED = 44
@@ -46,8 +50,8 @@ BUDGET  = 2500
 BASE = 5000
 EPOCH=2
 COMMUNICATION=2
-CYCLES=2
-RATIO=1.0
+CYCLES=3
+RATIO=0.1
 CLIENTS=10
 TRIALS=1
 LOCAL_MODEL_UPDATE = "Vanilla" # Options are "Vanilla", "SimpleContrastive", "DebiasedContrastive", and "KFCU"  

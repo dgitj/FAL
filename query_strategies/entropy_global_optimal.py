@@ -22,7 +22,19 @@ class ClassBalancedEntropySampler:
         
         # Set the global class distribution for CIFAR-10 (uniform distribution)
         # CIFAR-10 has 10 classes with equal distribution
-        self.global_class_distribution = {i: 0.1 for i in range(10)}
+        # self.global_class_distribution = {i: 0.1 for i in range(10)}
+        self.global_class_distribution = {
+            0: 0.0657,
+            1: 0.1874,
+            2: 0.1434,
+            3: 0.1129,
+            4: 0.1035,
+            5: 0.0962,
+            6: 0.0805,
+            7: 0.0765,
+            8: 0.0675,
+            9: 0.0662,
+        }
         
         print("[ClassBalancedEntropy] Initialized with global distribution:", self.global_class_distribution)
         print(f"[ClassBalancedEntropy] Using device: {self.device}")
@@ -251,6 +263,10 @@ class ClassBalancedEntropySampler:
             print(f"\n[ClassBalancedEntropy] Client {client_id}: Selecting {num_samples} samples")
             print(f"[ClassBalancedEntropy] Unlabeled pool size: {len(unlabeled_set)}")
         
+        if seed is not None:
+            np.random.seed(seed)
+            torch.manual_seed(seed)
+            
         # Get dataset for accessing labels
         dataset = unlabeled_loader.dataset
 
@@ -419,13 +435,23 @@ class ClassBalancedEntropySampler:
                     continue
                 
                 # Sort samples by entropy (highest first)
-                class_samples = class_entropy_mapping[cls]
-                class_samples.sort(key=lambda x: x[1], reverse=True)
+                # class_samples = class_entropy_mapping[cls]
+                # class_samples.sort(key=lambda x: x[1], reverse=True)
                 
                 # Select top samples by entropy
+                # num_to_select = min(target_counts[cls], len(class_samples))
+                # selected_indices = [sample[0] for sample in class_samples[:num_to_select]]
+                # selected_samples.extend(selected_indices)
+
+
+                class_samples = class_entropy_mapping[cls]
+
+                # Randomly select samples (no sorting by entropy)
                 num_to_select = min(target_counts[cls], len(class_samples))
-                selected_indices = [sample[0] for sample in class_samples[:num_to_select]]
+                random_indices = np.random.choice(len(class_samples), num_to_select, replace=False)
+                selected_indices = [class_samples[i][0] for i in random_indices]
                 selected_samples.extend(selected_indices)
+
                 
                 balanced_selections[cls] = num_to_select
                 print(f"[ClassBalancedEntropy] Selected {num_to_select} samples from class {cls}")

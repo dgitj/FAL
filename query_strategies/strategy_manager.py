@@ -8,8 +8,12 @@ from query_strategies.logo import LoGoSampler
 from query_strategies.entropy_global_optimal import ClassBalancedEntropySampler
 from query_strategies.coreset import CoreSetSampler
 from query_strategies.coreset_global_optimal import ClassBalancedCoreSetSampler
-from query_strategies.pseudo_entropy import PseudoClassBalancedEntropySampler
 from query_strategies.pseudo_confidence import PseudoClassBalancedConfidenceSampler
+from query_strategies.adaptive_entropy import AdaptiveEntropySampler
+from query_strategies.hybrid_entropy_kafal import HybridEntropyKAFALSampler
+from query_strategies.hybrid_entropy_kafal_entropy_first import HybridEntropyKAFALSampler as HybridEntropyKAFALEntropyFirstSampler
+from query_strategies.hybrid_entropy_kafal_class_differentiated import HybridEntropyKAFALSampler as HybridEntropyKAFALClassDifferentiatedSampler
+from query_strategies.ablation_class_uncertainty import AblationClassUncertaintySampler
 
 from config import ACTIVE_LEARNING_STRATEGY
 
@@ -21,6 +25,7 @@ class StrategyManager:
         self.clients_processed = 0
         self.total_clients = 0
         self.labeled_set_list = None
+        self.labeled_set_classes_list = None  # Added to store class information
         self.confidence_threshold = confidence_threshold
         
         # Initialize the sampling strategy
@@ -33,6 +38,10 @@ class StrategyManager:
     def set_labeled_set_list(self, labeled_set_list):
         """Set the labeled set list for the strategies that need it."""
         self.labeled_set_list = labeled_set_list
+        
+    def set_labeled_set_classes_list(self, labeled_set_classes_list):
+        """Set the list of classes for labeled samples for strategies that need it."""
+        self.labeled_set_classes_list = labeled_set_classes_list
     
     def _initialize_strategy(self, strategy_name, loss_weight_list):
         """
@@ -90,22 +99,37 @@ class StrategyManager:
         elif strategy_name == "CoreSet":
             return CoreSetSampler(self.device)
             
-        elif strategy_name == "PseudoEntropy":
-            # Use provided confidence threshold or default to 0.0
-            confidence = self.confidence_threshold if self.confidence_threshold is not None else 0.0
-            print(f"[StrategyManager] Initializing PseudoEntropy with confidence threshold: {confidence}")
-            return PseudoClassBalancedEntropySampler(self.device, confidence_threshold=confidence)
             
         elif strategy_name == "PseudoConfidence":
             print(f"[StrategyManager] Initializing PseudoConfidence strategy")
             return PseudoClassBalancedConfidenceSampler(self.device)
+            
+        elif strategy_name == "AdaptiveEntropy":
+            print(f"[StrategyManager] Initializing AdaptiveEntropy strategy")
+            return AdaptiveEntropySampler(self.device)
+            
+        elif strategy_name == "HybridEntropyKAFAL":
+            print(f"[StrategyManager] Initializing HybridEntropyKAFAL strategy")
+            return HybridEntropyKAFALSampler(self.device)
+            
+        elif strategy_name == "HybridEntropyKAFALEntropyFirst":
+            print(f"[StrategyManager] Initializing HybridEntropyKAFAL with Entropy-First approach")
+            return HybridEntropyKAFALEntropyFirstSampler(self.device)
+            
+        elif strategy_name == "HybridEntropyKAFALClassDifferentiated":
+            print(f"[StrategyManager] Initializing HybridEntropyKAFAL with Class-Differentiated approach")
+            return HybridEntropyKAFALClassDifferentiatedSampler(self.device)
+            
+        elif strategy_name == "AblationClassUncertainty":
+            print(f"[StrategyManager] Initializing Ablation: Class-Specific Uncertainty Only")
+            return AblationClassUncertaintySampler(self.device)
 
         else:
             raise ValueError(f"Invalid strategy name: {strategy_name}")
             
         print(f"{strategy_name} strategy initialized successfully")
         
-    def select_samples(self, model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, labeled_set=None, seed=None, global_class_distribution=None):
+    def select_samples(self, model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, labeled_set=None, seed=None, global_class_distribution=None, class_variance_stats=None, current_round=0, total_rounds=5):
         """
         Select samples using the specified active learning strategy.
         
@@ -119,6 +143,9 @@ class StrategyManager:
             labeled_set: List of labeled sample indices (optional)
             seed: Random seed for reproducibility (optional)
             global_class_distribution: Global class distribution from server (optional)
+            class_variance_stats: Statistics about class variance across clients (optional)
+            current_round: Current active learning round (optional)
+            total_rounds: Total number of active learning rounds (optional)
             
         Returns:
             tuple: (selected_samples, remaining_unlabeled)
@@ -164,7 +191,100 @@ class StrategyManager:
                 global_class_distribution=global_class_distribution
             )
             
-        elif self.strategy_name in ["GlobalOptimal", "CoreSetGlobalOptimal", "PseudoEntropy"]:
+        elif self.strategy_name == "AdaptiveEntropy":
+            # AdaptiveEntropy needs global class distribution and variance stats
+            if labeled_set is None and self.labeled_set_list is not None and c < len(self.labeled_set_list):
+                labeled_set = self.labeled_set_list[c]
+                
+            # Pass all required parameters to AdaptiveEntropy strategy
+            return self.sampler.select_samples(
+                model, model_server, unlabeled_loader, c, unlabeled_set, 
+                num_samples, labeled_set=labeled_set, seed=seed,
+                global_class_distribution=global_class_distribution,
+                class_variance_stats=class_variance_stats,
+                current_round=current_round,
+                total_rounds=total_rounds
+            )
+            
+        elif self.strategy_name == "HybridEntropyKAFAL":
+            # This strategy needs both models, client ID, and class variance stats
+            try:
+                if labeled_set is None and self.labeled_set_list is not None and c < len(self.labeled_set_list):
+                    labeled_set = self.labeled_set_list[c]
+                
+                # Get labeled set class information if available
+                labeled_set_classes = None
+                if hasattr(self, 'labeled_set_classes_list') and self.labeled_set_classes_list is not None \
+                   and c < len(self.labeled_set_classes_list):
+                    labeled_set_classes = self.labeled_set_classes_list[c]
+                    
+                # Pass all required parameters to HybridEntropyKAFAL strategy
+                return self.sampler.select_samples(
+                    model, model_server, unlabeled_loader, c, unlabeled_set, 
+                    num_samples, labeled_set=labeled_set, seed=seed,
+                    global_class_distribution=global_class_distribution,
+                    class_variance_stats=class_variance_stats,
+                    current_round=current_round,
+                    total_rounds=total_rounds,
+                    labeled_set_classes=labeled_set_classes
+                )
+            except ValueError as e:
+                print(f"ERROR in HybridEntropyKAFAL: {str(e)}")
+                raise  # Re-raise the exception to be handled by the caller
+                
+        elif self.strategy_name == "HybridEntropyKAFALEntropyFirst":
+            # This strategy needs both models, client ID, and class variance stats
+            try:
+                if labeled_set is None and self.labeled_set_list is not None and c < len(self.labeled_set_list):
+                    labeled_set = self.labeled_set_list[c]
+                
+                # Get labeled set class information if available
+                labeled_set_classes = None
+                if hasattr(self, 'labeled_set_classes_list') and self.labeled_set_classes_list is not None \
+                   and c < len(self.labeled_set_classes_list):
+                    labeled_set_classes = self.labeled_set_classes_list[c]
+                    
+                # Pass all required parameters to HybridEntropyKAFAL strategy
+                return self.sampler.select_samples(
+                    model, model_server, unlabeled_loader, c, unlabeled_set, 
+                    num_samples, labeled_set=labeled_set, seed=seed,
+                    global_class_distribution=global_class_distribution,
+                    class_variance_stats=class_variance_stats,
+                    current_round=current_round,
+                    total_rounds=total_rounds,
+                    labeled_set_classes=labeled_set_classes
+                )
+            except ValueError as e:
+                print(f"ERROR in HybridEntropyKAFALEntropyFirst: {str(e)}")
+                raise  # Re-raise the exception to be handled by the caller
+                
+        elif self.strategy_name in ["HybridEntropyKAFALClassDifferentiated", "AblationClassUncertainty"]:
+            # These strategies need both models, client ID, and class variance stats
+            try:
+                if labeled_set is None and self.labeled_set_list is not None and c < len(self.labeled_set_list):
+                    labeled_set = self.labeled_set_list[c]
+                
+                # Get labeled set class information if available
+                labeled_set_classes = None
+                if hasattr(self, 'labeled_set_classes_list') and self.labeled_set_classes_list is not None \
+                   and c < len(self.labeled_set_classes_list):
+                    labeled_set_classes = self.labeled_set_classes_list[c]
+                    
+                # Pass all required parameters to class-differentiated strategy
+                return self.sampler.select_samples(
+                    model, model_server, unlabeled_loader, c, unlabeled_set, 
+                    num_samples, labeled_set=labeled_set, seed=seed,
+                    global_class_distribution=global_class_distribution,
+                    class_variance_stats=class_variance_stats,
+                    current_round=current_round,
+                    total_rounds=total_rounds,
+                    labeled_set_classes=labeled_set_classes
+                )
+            except ValueError as e:
+                print(f"ERROR in {self.strategy_name}: {str(e)}")
+                raise  # Re-raise the exception to be handled by the caller
+                
+        elif self.strategy_name in ["GlobalOptimal", "CoreSetGlobalOptimal"]:
             # These strategies need both models, client ID, and access to true labels
             if labeled_set is None and self.labeled_set_list is not None and c < len(self.labeled_set_list):
                 labeled_set = self.labeled_set_list[c]         
