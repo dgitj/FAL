@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 
 # Import models
 import models.preact_resnet as resnet
+import models.preact_resnet_mnist as resnet_mnist
 
 
 # Import data utilities
@@ -55,7 +56,7 @@ def parse_arguments():
     parser.add_argument('--seed', type=int, help='Random seed')
     parser.add_argument('--max-rounds', type=int, help='Maximum communication rounds per cycle')
     parser.add_argument('--check-convergence', action='store_true', help='Monitor convergence before AL starts')
-    parser.add_argument('--dataset', type=str, choices=['CIFAR10', 'SVHN', 'CIFAR100'], help='Dataset to use')
+    parser.add_argument('--dataset', type=str, choices=['CIFAR10', 'SVHN', 'CIFAR100', 'MNIST'], help='Dataset to use')
     
     # Add checkpoint arguments
     parser.add_argument('--no-checkpoints', action='store_true', help='Disable automatic checkpoint saving')
@@ -66,8 +67,8 @@ def parse_arguments():
 
 
 def load_datasets():
-    """Load and prepare datasets (CIFAR10, SVHN, or CIFAR100)."""
-    from torchvision.datasets import CIFAR10, SVHN, CIFAR100
+    """Load and prepare datasets (CIFAR10, SVHN, CIFAR100, or MNIST)."""
+    from torchvision.datasets import CIFAR10, SVHN, CIFAR100, MNIST
     import torchvision.transforms as T
 
     dataset_name = config.DATASET
@@ -130,6 +131,26 @@ def load_datasets():
         train_dataset = CIFAR100(dataset_dir, train=True, download=True, transform=train_transform)
         test_dataset = CIFAR100(dataset_dir, train=False, download=True, transform=test_transform)
         select_dataset = CIFAR100(dataset_dir, train=True, download=True, transform=test_transform)
+        
+    elif dataset_name == "MNIST":
+        train_transform = T.Compose([
+            T.RandomCrop(size=28, padding=2),  # MNIST is 28x28
+            T.ToTensor(),
+            T.Normalize([0.1307], [0.3081])  # MNIST mean and std
+        ])
+
+        test_transform = T.Compose([
+            T.ToTensor(),
+            T.Normalize([0.1307], [0.3081])
+        ])
+
+        dataset_dir = config.DATA_ROOT
+        
+        # Load datasets
+        train_dataset = MNIST(dataset_dir, train=True, download=True, transform=train_transform)
+        test_dataset = MNIST(dataset_dir, train=False, download=True, transform=test_transform)
+        select_dataset = MNIST(dataset_dir, train=True, download=True, transform=test_transform)
+        
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
         
@@ -228,13 +249,20 @@ def main():
         if config.DATASET == "CIFAR10":
             config.DATA_ROOT = 'data/cifar-10-batches-py'
             config.NUM_CLASSES = 10
+            config.NUM_TRAIN = 50000
         elif config.DATASET == "SVHN":
             config.DATA_ROOT = 'data/svhn'
             config.NUM_CLASSES = 10
+            config.NUM_TRAIN = 73257  # SVHN train set size
         elif config.DATASET == "CIFAR100":
             config.DATA_ROOT = 'data/cifar-100-python'
             config.NUM_CLASSES = 100
-        print(f"Using dataset: {config.DATASET} with {config.NUM_CLASSES} classes")
+            config.NUM_TRAIN = 50000
+        elif config.DATASET == "MNIST":
+            config.DATA_ROOT = 'data/mnist'
+            config.NUM_CLASSES = 10
+            config.NUM_TRAIN = 60000  # MNIST train set size
+        print(f"Using dataset: {config.DATASET} with {config.NUM_CLASSES} classes and {config.NUM_TRAIN} training samples")
     
     if args.cycles:
         config.CYCLES = args.cycles
@@ -308,6 +336,8 @@ def main():
     elif config.DATASET == "SVHN":
         # For SVHN, we need to use the labels attribute directly
         id2lab = [cifar10_train.labels[id] for id in indices]
+    elif config.DATASET == "MNIST":
+        id2lab = [cifar10_train[id][1] for id in indices]
     else:
         id2lab = [cifar10_train[id][1] for id in indices]  # Default to CIFAR10 format
     id2lab = np.array(id2lab)
@@ -353,7 +383,10 @@ def main():
             print(f"Setting PseudoEntropy confidence threshold to: {args.confidence}")
         
         # Prepare client data
-        resnet8 = resnet.preact_resnet8_cifar(num_classes=num_classes)
+        if config.DATASET == "MNIST":
+            resnet8 = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes)
+        else:
+            resnet8 = resnet.preact_resnet8_cifar(num_classes=num_classes)
         client_models = []
         data_list = []
         total_data_num = [len(data_splits[c]) for c in range(config.CLIENTS)]
@@ -380,7 +413,10 @@ def main():
             print(f"\n===== Resuming from checkpoint: {args.resume_from} =====")
             
             # Create temporary models, optimizers, and schedulers to load the checkpoint
-            temp_server = resnet.preact_resnet8_cifar(num_classes=num_classes).to(device)
+            if config.DATASET == "MNIST":
+                temp_server = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes).to(device)
+            else:
+                temp_server = resnet.preact_resnet8_cifar(num_classes=num_classes).to(device)
             temp_clients = [copy.deepcopy(temp_server) for _ in range(config.CLIENTS)]
             
             temp_optim_clients = []
@@ -466,7 +502,12 @@ def main():
                 ))
                 
                 # Initialize client models (their weights will be loaded from checkpoint at training time)
-                client_models.append(copy.deepcopy(resnet8).to(device))
+                # Important: ensure we're using the same architecture type when resuming
+                if config.DATASET == "MNIST":
+                    client_model = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes)
+                else:
+                    client_model = resnet.preact_resnet8_cifar(num_classes=num_classes)
+                client_models.append(copy.deepcopy(client_model).to(device))
                 
                 # Record data distribution for logging
                 trainer.update_client_distribution(c, labeled_set_list[c], cifar10_train)
@@ -638,8 +679,8 @@ def main():
             # Calculate global class distribution
             global_distribution = trainer.aggregate_class_distributions()
         
-        # Check if PseudoConfidence needs global distribution
-        if config.ACTIVE_LEARNING_STRATEGY == "PseudoConfidence" and global_distribution is None:
+        # Check if strategy needs global distribution
+        if config.ACTIVE_LEARNING_STRATEGY in ["PseudoConfidence", "PseudoEntropy"] and global_distribution is None:
             raise ValueError("Error: PseudoConfidence strategy requires global class distribution, but none was computed. "
                             "Make sure there are labeled samples available on all clients.")
         
@@ -651,7 +692,10 @@ def main():
         # Active learning cycles
         for cycle in range(cycle_start, config.CYCLES):
             # Create server model
-            server = resnet.preact_resnet8_cifar(num_classes=num_classes).to(device)
+            if config.DATASET == "MNIST":
+                server = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes).to(device)
+            else:
+                server = resnet.preact_resnet8_cifar(num_classes=num_classes).to(device)
             models = {'clients': client_models, 'server': server}
             
             # Initialize criterion, optimizers, and schedulers

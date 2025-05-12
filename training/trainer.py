@@ -779,6 +779,7 @@ class FederatedTrainer:
             'loss_weight_list': [w.cpu().tolist() for w in self.loss_weight_list],  # Convert tensors to lists
             'client_class_distributions': self.client_class_distributions,
             'global_class_distribution': self.global_class_distribution,
+            'model_architecture': 'mnist' if self.config.DATASET == 'MNIST' else 'cifar',  # Store architecture type
             'config': {
                 'DATASET': self.config.DATASET,
                 'ACTIVE_LEARNING_STRATEGY': self.config.ACTIVE_LEARNING_STRATEGY,
@@ -824,12 +825,26 @@ class FederatedTrainer:
         # Verify compatibility
         if checkpoint['config']['DATASET'] != self.config.DATASET:
             print(f"Warning: Checkpoint dataset ({checkpoint['config']['DATASET']}) differs from current dataset ({self.config.DATASET})")
+            
+            # Check for architecture mismatch that would cause model loading failure
+            is_mnist_checkpoint = checkpoint['config']['DATASET'] == 'MNIST'
+            is_mnist_current = self.config.DATASET == 'MNIST'
+            
+            if is_mnist_checkpoint != is_mnist_current:
+                # Critical architecture mismatch - different input channels (1 vs 3)
+                raise ValueError(f"Critical architecture mismatch: Cannot load {checkpoint['config']['DATASET']} model into {self.config.DATASET} model architecture due to different input channel dimensions.")
         
         if checkpoint['config']['ACTIVE_LEARNING_STRATEGY'] != self.config.ACTIVE_LEARNING_STRATEGY:
             print(f"Warning: Checkpoint strategy ({checkpoint['config']['ACTIVE_LEARNING_STRATEGY']}) differs from current strategy ({self.config.ACTIVE_LEARNING_STRATEGY})")
         
         if checkpoint['config']['CLIENTS'] != self.config.CLIENTS:
             raise ValueError(f"Incompatible number of clients: checkpoint has {checkpoint['config']['CLIENTS']}, but current config has {self.config.CLIENTS}")
+        
+        # Verify model architecture if the field exists (for checkpoints saved with the updated code)
+        if 'model_architecture' in checkpoint:
+            expected_arch = 'mnist' if self.config.DATASET == 'MNIST' else 'cifar'
+            if checkpoint['model_architecture'] != expected_arch:
+                raise ValueError(f"Architecture mismatch: Checkpoint was created with {checkpoint['model_architecture']} architecture, but current dataset requires {expected_arch} architecture.")
         
         # Load server state
         models['server'].load_state_dict(checkpoint['server_state']['model'])
