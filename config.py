@@ -2,7 +2,7 @@
 '''
 
 # Dataset selection
-DATASET = "CIFAR10"  # Options are "CIFAR10", "SVHN", and "CIFAR100"
+DATASET = "CIFAR10"  # Options are "CIFAR10", "SVHN", "CIFAR100", and "MNIST"
 
 # directory paths for datasets and number of classes
 if DATASET == "CIFAR10":
@@ -14,6 +14,9 @@ elif DATASET == "SVHN":
 elif DATASET == "CIFAR100":
     DATA_ROOT = 'data/cifar-100-python'
     NUM_CLASSES = 100
+elif DATASET == "MNIST":
+    DATA_ROOT = 'data/mnist'
+    NUM_CLASSES = 10
 else:
     DATA_ROOT = 'data/cifar-10-batches-py'  # Default fallback
     NUM_CLASSES = 10
@@ -30,13 +33,14 @@ else:
 # - "CoreSet"
 # - "CoreSetGlobalOptimal"
 # - "PseudoConfidence"
+# - "PseudoConfidenceEntropy"
 # - "AdaptiveEntropy"
 # - "HybridEntropyKAFAL"
 # - "HybridEntropyKAFALEntropyFirst"
 # - "HybridEntropyKAFALClassDifferentiated"
 # - "AblationClassUncertainty"
 
-ACTIVE_LEARNING_STRATEGY = "HybridEntropyKAFALClassDifferentiated"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "GlobalOptimal", "CoreSet", "CoreSetGlobalOptimal", "PseudoConfidence", "AdaptiveEntropy", "HybridEntropyKAFAL", "HybridEntropyKAFALEntropyFirst", "HybridEntropyKAFALClassDifferentiated", and "AblationClassUncertainty"
+ACTIVE_LEARNING_STRATEGY = "PseudoEntropy"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "GlobalOptimal", "CoreSet", "CoreSetGlobalOptimal", "PseudoConfidence", "AdaptiveEntropy", "HybridEntropyKAFAL", "HybridEntropyKAFALEntropyFirst", "HybridEntropyKAFALClassDifferentiated", and "AblationClassUncertainty"
 
 # random seed
 SEED = 44
