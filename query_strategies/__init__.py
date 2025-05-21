@@ -12,6 +12,7 @@ from .entropy_global_optimal import ClassBalancedEntropySampler
 from .coreset import CoreSetSampler
 from .coreset_global_optimal import ClassBalancedCoreSetSampler
 from .pseudo_confidence import PseudoClassBalancedConfidenceSampler
+from .pseudo_entropy_variance import PseudoClassBalancedVarianceEntropySampler
 
 # Define __all__ for explicit exports
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "ClassBalancedCoreSetSampler",
     "PseudoClassBalancedEntropySampler",
     "PseudoClassBalancedConfidenceSampler",
+    "PseudoClassBalancedVarianceEntropySampler",
 ]
