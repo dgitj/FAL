@@ -15,7 +15,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data.sampler import SubsetRandomSampler
-import matplotlib.pyplot as plt
+
 
 # Import models
 import models.preact_resnet as resnet
@@ -200,33 +200,6 @@ def create_val_loader(dataset, trial_seed, indices=None, batch_size=config.BATCH
     
     return val_loader
 
-def plot_convergence(train_losses, val_accuracies, rounds, save_path, title="Model Convergence"):
-    """Plot training loss and validation accuracy to visualize convergence."""
-    fig, ax1 = plt.subplots(figsize=(10, 6))
-    
-    # Plot training loss
-    color = 'tab:red'
-    ax1.set_xlabel('Communication Round')
-    ax1.set_ylabel('Training Loss', color=color)
-    ax1.plot(rounds, train_losses, color=color, marker='o', linestyle='-', label='Training Loss')
-    ax1.tick_params(axis='y', labelcolor=color)
-    
-    # Create second y-axis for validation accuracy
-    ax2 = ax1.twinx()
-    color = 'tab:blue'
-    ax2.set_ylabel('Validation Accuracy (%)', color=color)
-    ax2.plot(rounds, val_accuracies, color=color, marker='s', linestyle='-', label='Validation Accuracy')
-    ax2.tick_params(axis='y', labelcolor=color)
-    
-    plt.title(title)
-    fig.tight_layout()
-    
-    # Save figure
-    os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    print(f"Convergence plot saved to {save_path}")
 
 def main():
     """Main function to run federated active learning experiments."""
@@ -378,7 +351,7 @@ def main():
         }
         
         # Add confidence threshold for PseudoEntropy if specified
-        if config.ACTIVE_LEARNING_STRATEGY in ["PseudoEntropy", "PseudoConfidence"] and args.confidence is not None:
+        if config.ACTIVE_LEARNING_STRATEGY in ["PseudoEntropy", "PseudoConfidence", "PseudoEntropyVariance"] and args.confidence is not None:
             strategy_params['confidence_threshold'] = args.confidence
             print(f"Setting PseudoEntropy confidence threshold to: {args.confidence}")
         
@@ -638,7 +611,7 @@ def main():
         strategy_manager = StrategyManager(**strategy_params)
         
         # If using strategies that need labeled set list or total clients
-        if config.ACTIVE_LEARNING_STRATEGY in ["GlobalOptimal", "CoreSetGlobalOptimal", "CoreSet", "PseudoEntropy", "PseudoConfidence", "HybridEntropyKAFAL"]:
+        if config.ACTIVE_LEARNING_STRATEGY in ["GlobalOptimal", "CoreSetGlobalOptimal", "CoreSet", "PseudoEntropy", "PseudoConfidence", "HybridEntropyKAFAL", "PseudoEntropyVariance"]:
             strategy_manager.set_total_clients(config.CLIENTS)
             strategy_manager.set_labeled_set_list(labeled_set_list)
 
@@ -680,7 +653,7 @@ def main():
             global_distribution = trainer.aggregate_class_distributions()
         
         # Check if strategy needs global distribution
-        if config.ACTIVE_LEARNING_STRATEGY in ["PseudoConfidence", "PseudoEntropy"] and global_distribution is None:
+        if config.ACTIVE_LEARNING_STRATEGY in ["PseudoConfidence", "PseudoEntropy", "PseudoEntropyVariance"] and global_distribution is None:
             raise ValueError("Error: PseudoConfidence strategy requires global class distribution, but none was computed. "
                             "Make sure there are labeled samples available on all clients.")
         
@@ -725,45 +698,19 @@ def main():
             optimizers = {'clients': optim_clients, 'server': optim_server}
             schedulers = {'clients': sched_clients, 'server': sched_server}
             
-            # Train with convergence monitoring if requested
-            if cycle == 0 and check_convergence:
-                print("\n===== Monitoring model convergence before active learning =====\n")
-                # Run with convergence monitoring for first cycle
-                train_stats = trainer.train(
-                    models, criterion, optimizers, schedulers, dataloaders, config.EPOCH, trial_seed,
-                    val_loader=dataloaders['val'], max_rounds=max_rounds
-                )
-                
-                # Plot convergence
-                if train_stats['rounds_completed'] > 0:
-                    conv_plot_path = os.path.join(viz_dir, f"convergence_trial_{trial+1}_cycle_{cycle+1}.png")
-                    plot_convergence(
-                        train_stats['train_losses'],
-                        train_stats['val_accuracies'],
-                        list(range(1, train_stats['rounds_completed'] + 1)),
-                        conv_plot_path,
-                        title=f"Model Convergence - Trial {trial+1} Cycle {cycle+1}"
-                    )
-                    
-                    # Print convergence summary
-                    print("\n===== Convergence Summary =====")
-                    print(f"Rounds completed: {train_stats['rounds_completed']}/{max_rounds}")
-                    print(f"Best validation accuracy: {train_stats['best_val_accuracy']:.2f}%")
-                    
-                    # Check if convergence appears to be reached
-                    if len(train_stats['val_accuracies']) > 2:
-                        last_3_accs = train_stats['val_accuracies'][-3:]
-                        acc_diff = max(last_3_accs) - min(last_3_accs)
-                        if acc_diff < 0.5:  # Less than 0.5% change in last 3 rounds
-                            print(f"Convergence appears stable (accuracy change < 0.5% in last 3 rounds)")
-                        else:
-                            print(f"Convergence may not be stable yet (accuracy change of {acc_diff:.2f}% in last 3 rounds)")
-                    print("=============================\n")
-            else:
-                # Regular training for subsequent cycles
-                train_stats = trainer.train(
-                    models, criterion, optimizers, schedulers, dataloaders, config.EPOCH, trial_seed
-                )
+            
+            # Update class distribution statistics after selection
+            print("\n===== Updating Class Distribution Analysis =====\n")
+            
+            # Update client distribution in trainer
+            for c in range(config.CLIENTS):
+                trainer.update_client_distribution(c, labeled_set_list[c], cifar10_train)
+            
+            # Recalculate variance statistics for next cycle
+            variance_stats = trainer.analyze_class_distribution_variance()
+            
+            # Note: global_distribution remains fixed from initial calculation
+            # to serve as a consistent target throughout training
             
             # Count total labeled samples
             total_labels = sum(len(labeled_set_list[c]) for c in range(config.CLIENTS))
@@ -801,7 +748,7 @@ def main():
                 )
                 
                 # Select samples using strategy manager
-                if config.ACTIVE_LEARNING_STRATEGY in ["PseudoConfidence", "PseudoEntropy", "AdaptiveEntropy", "HybridEntropyKAFALClassDifferentiated", "AblationClassUncertainty"]:
+                if config.ACTIVE_LEARNING_STRATEGY in ["PseudoConfidence", "PseudoEntropy", "PseudoEntropyVariance", "AdaptiveEntropy", "HybridEntropyKAFALClassDifferentiated", "AblationClassUncertainty"]:
                     # Pass global distribution when using PseudoConfidence
                     selected_samples, remaining_unlabeled = strategy_manager.select_samples(
                         models['clients'][c],

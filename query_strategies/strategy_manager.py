@@ -10,6 +10,7 @@ from query_strategies.coreset import CoreSetSampler
 from query_strategies.coreset_global_optimal import ClassBalancedCoreSetSampler
 from query_strategies.pseudo_confidence import PseudoClassBalancedConfidenceSampler
 from query_strategies.pseudo_entropy import PseudoClassBalancedEntropySampler
+from query_strategies.pseudo_entropy_variance import PseudoClassBalancedVarianceEntropySampler
 from query_strategies.adaptive_entropy import AdaptiveEntropySampler
 from query_strategies.hybrid_entropy_kafal import HybridEntropyKAFALSampler
 from query_strategies.hybrid_entropy_kafal_entropy_first import HybridEntropyKAFALSampler as HybridEntropyKAFALEntropyFirstSampler
@@ -109,6 +110,10 @@ class StrategyManager:
             print(f"[StrategyManager] Initializing PseudoEntropy strategy")
             return PseudoClassBalancedEntropySampler(self.device)
             
+        elif strategy_name == "PseudoEntropyVariance":
+            print(f"[StrategyManager] Initializing PseudoEntropyVariance strategy (with class variance awareness)")
+            return PseudoClassBalancedVarianceEntropySampler(self.device)
+            
         elif strategy_name == "AdaptiveEntropy":
             print(f"[StrategyManager] Initializing AdaptiveEntropy strategy")
             return AdaptiveEntropySampler(self.device)
@@ -194,6 +199,19 @@ class StrategyManager:
                 model, model_server, unlabeled_loader, c, unlabeled_set, 
                 num_samples, labeled_set=labeled_set, seed=seed,
                 global_class_distribution=global_class_distribution
+            )
+            
+        elif self.strategy_name == "PseudoEntropyVariance":
+            # This strategy uses both global distribution and class variance stats
+            if labeled_set is None and self.labeled_set_list is not None and c < len(self.labeled_set_list):
+                labeled_set = self.labeled_set_list[c]
+                
+            # Pass global distribution and variance stats to the strategy
+            return self.sampler.select_samples(
+                model, model_server, unlabeled_loader, c, unlabeled_set, 
+                num_samples, labeled_set=labeled_set, seed=seed,
+                global_class_distribution=global_class_distribution,
+                class_variance_stats=class_variance_stats
             )
             
         elif self.strategy_name == "AdaptiveEntropy":

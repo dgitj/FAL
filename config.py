@@ -33,14 +33,15 @@ else:
 # - "CoreSet"
 # - "CoreSetGlobalOptimal"
 # - "PseudoConfidence"
-# - "PseudoConfidenceEntropy"
+# - "PseudoEntropy"
+# - "PseudoEntropyVariance"
 # - "AdaptiveEntropy"
 # - "HybridEntropyKAFAL"
 # - "HybridEntropyKAFALEntropyFirst"
 # - "HybridEntropyKAFALClassDifferentiated"
 # - "AblationClassUncertainty"
 
-ACTIVE_LEARNING_STRATEGY = "PseudoEntropy"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "GlobalOptimal", "CoreSet", "CoreSetGlobalOptimal", "PseudoConfidence", "AdaptiveEntropy", "HybridEntropyKAFAL", "HybridEntropyKAFALEntropyFirst", "HybridEntropyKAFALClassDifferentiated", and "AblationClassUncertainty"
+ACTIVE_LEARNING_STRATEGY = "PseudoEntropyVariance"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "GlobalOptimal", "CoreSet", "CoreSetGlobalOptimal", "PseudoConfidence", "PseudoEntropy", "PseudoEntropyVariance", "AdaptiveEntropy", "HybridEntropyKAFAL", "HybridEntropyKAFALEntropyFirst", "HybridEntropyKAFALClassDifferentiated", and "AblationClassUncertainty"
 
 # random seed
 SEED = 44
@@ -52,8 +53,8 @@ ALPHA = 0.1
 # setting
 BUDGET  = 2500
 BASE = 5000
-EPOCH=2
-COMMUNICATION=2
+EPOCH=5
+COMMUNICATION=5
 CYCLES=3
 RATIO=0.1
 CLIENTS=10
