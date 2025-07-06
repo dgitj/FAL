@@ -1,7 +1,7 @@
 # training/ssl_augmentations.py
 """
 Data augmentation strategies for SSL pre-training.
-Provides dataset-specific augmentation pipelines for SimCLR.
+Provides dataset-specific augmentation pipelines for SimCLR
 """
 
 import torch
