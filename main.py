@@ -20,6 +20,8 @@ from torch.utils.data.sampler import SubsetRandomSampler
 # Import models
 import models.preact_resnet as resnet
 import models.preact_resnet_mnist as resnet_mnist
+from training.federated_ssl_trainer import perform_federated_ssl_pretraining
+from models.ssl_models import create_model_with_pretrained_encoder_cifar, create_model_with_pretrained_encoder_mnist
 
 
 # Import data utilities
@@ -286,6 +288,51 @@ def main():
         # Create non-IID data partitioning
         data_splits = dirichlet_balanced_partition(cifar10_train, config.CLIENTS, alpha=config.ALPHA, seed=trial_seed)
         
+        # SSL Pre-training if enabled
+        if config.USE_SSL_PRETRAIN:
+            print("\n=== Starting Federated SSL Pre-training ===")
+            
+            # Get the base dataset without augmentations for SSL
+            # (SSL will apply its own augmentations)
+            if config.DATASET == "CIFAR10":
+                from torchvision.datasets import CIFAR10
+                ssl_dataset = CIFAR10(config.DATA_ROOT, train=True, download=False, transform=None)
+            elif config.DATASET == "MNIST":
+                from torchvision.datasets import MNIST
+                ssl_dataset = MNIST(config.DATA_ROOT, train=True, download=False, transform=None)
+            # Add other datasets as needed
+            
+            # Perform federated SSL pre-training
+            ssl_pretrained_encoder = perform_federated_ssl_pretraining(
+                data_splits=data_splits,
+                config=config,
+                device=device,
+                trial_seed=trial_seed,
+                base_dataset=ssl_dataset
+            )
+            
+            # Create model with pre-trained encoder
+            if config.DATASET == "MNIST":
+                base_model = create_model_with_pretrained_encoder_mnist(
+                    ssl_pretrained_encoder,
+                    num_classes=config.NUM_CLASSES
+                )
+            else:
+                base_model = create_model_with_pretrained_encoder_cifar(
+                    ssl_pretrained_encoder,
+                    num_classes=config.NUM_CLASSES
+                )
+            
+            print("SSL Pre-training completed! Using pre-trained features.\n")
+        else:
+            # Original random initialization
+            if config.DATASET == "MNIST":
+                base_model = resnet_mnist.preact_resnet8_mnist(num_classes=config.NUM_CLASSES)
+            else:
+                base_model = resnet.preact_resnet8_cifar(num_classes=config.NUM_CLASSES)
+
+
+
         # Initialize logger
         logger = FederatedALLogger(
             strategy_name=config.ACTIVE_LEARNING_STRATEGY,
@@ -392,7 +439,7 @@ def main():
             ))
             
             # Initialize client models
-            client_models.append(copy.deepcopy(resnet8).to(device))
+            client_models.append(copy.deepcopy(base_model).to(device))
     
         data_num = np.array(data_num)
 
