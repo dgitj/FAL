@@ -8,62 +8,78 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.preact_resnet import BasicBlock
+from models.preact_resnet_mnist import PreActBlock
 
 
 class PreActResNetEncoder(nn.Module):
     """
     Encoder part of PreActResNet without the final classification layer.
     Extracts features that can be used for SSL pre-training.
+    Matches the architecture of PreAct_ResNet_Cifar from preact_resnet.py
     """
     def __init__(self, block, num_blocks, num_classes=10, dataset='cifar'):
         super(PreActResNetEncoder, self).__init__()
-        self.in_planes = 64
+        self.in_planes = 16  # Changed from 64 to match original
         self.dataset = dataset
         
         if dataset == 'mnist':
             # MNIST is 1 channel
-            self.conv1 = nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1, bias=False)
-            self.output_dim = 512 * block.expansion
+            self.conv1 = nn.Conv2d(1, 16, kernel_size=3, stride=1, padding=1, bias=False)
+            self.bn = nn.BatchNorm2d(64 * block.expansion)
+            self.output_dim = 64 * block.expansion
+            # MNIST is 28x28, so we need 7x7 pooling after 2 stride-2 convs
+            self.avgpool = nn.AvgPool2d(7, stride=1)
         else:
             # CIFAR is 3 channels
-            self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-            self.output_dim = 512 * block.expansion
+            self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
+            self.bn = nn.BatchNorm2d(64 * block.expansion)
+            self.output_dim = 64 * block.expansion
+            # CIFAR is 32x32, so we need 8x8 pooling after 2 stride-2 convs
+            self.avgpool = nn.AvgPool2d(8, stride=1)
             
-        self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
-        self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
+        self.layer1 = self._make_layer(block, 16, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, 32, num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, 64, num_blocks[2], stride=2)
         
-        # Global average pooling
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.relu = nn.ReLU(inplace=True)
 
     def _make_layer(self, block, planes, num_blocks, stride):
-        strides = [stride] + [1]*(num_blocks-1)
+        downsample = None
+        if stride != 1 or self.in_planes != planes * block.expansion:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.in_planes, planes * block.expansion, kernel_size=1, stride=stride, bias=False)
+            )
+        
         layers = []
-        for stride in strides:
-            layers.append(block(self.in_planes, planes, stride))
-            self.in_planes = planes * block.expansion
+        layers.append(block(self.in_planes, planes, stride, downsample))
+        self.in_planes = planes * block.expansion
+        for _ in range(1, num_blocks):
+            layers.append(block(self.in_planes, planes))
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        # Following the exact forward pass of PreAct_ResNet_Cifar
         out = self.conv1(x)
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
-        out = self.layer4(out)
+        
+        out = self.bn(out)
+        out = self.relu(out)
         out = self.avgpool(out)
-        out = torch.flatten(out, 1)
+        out = out.view(out.size(0), -1)
         return out
 
 
 def create_encoder_cifar():
     """Create encoder for CIFAR datasets."""
-    return PreActResNetEncoder(BasicBlock, [1, 1, 1, 1], dataset='cifar')
+    return PreActResNetEncoder(BasicBlock, [1, 1, 1], dataset='cifar')
 
 
 def create_encoder_mnist():
     """Create encoder for MNIST dataset."""
-    return PreActResNetEncoder(BasicBlock, [1, 1, 1, 1], dataset='mnist')
+    # Use PreActBlock for MNIST like the original model
+    return PreActResNetEncoder(PreActBlock, [1, 1, 1], dataset='mnist')
 
 
 class ProjectionHead(nn.Module):
