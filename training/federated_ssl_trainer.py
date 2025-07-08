@@ -242,13 +242,24 @@ class FederatedSSLTrainer:
         
         # Aggregate each parameter
         for key in global_state.keys():
-            # Initialize with zeros
-            global_state[key] = torch.zeros_like(global_state[key])
-            
-            # Weighted sum of client parameters
-            for idx, c in enumerate(selected_clients):
-                client_state = client_encoders[c].state_dict()
-                global_state[key] += weights[idx] * client_state[key]
+            # Handle different parameter types
+            if 'num_batches_tracked' in key:
+                # For batch norm tracking stats, just use the first client's value
+                # (these are not trainable parameters)
+                global_state[key] = client_encoders[selected_clients[0]].state_dict()[key].clone()
+            else:
+                # For regular parameters, do weighted averaging
+                # Initialize with zeros of the same type
+                global_state[key] = torch.zeros_like(global_state[key], dtype=torch.float32)
+                
+                # Weighted sum of client parameters
+                for idx, c in enumerate(selected_clients):
+                    client_state = client_encoders[c].state_dict()
+                    global_state[key] += weights[idx] * client_state[key].float()
+                
+                # Convert back to original dtype if needed
+                if global_encoder.state_dict()[key].dtype != torch.float32:
+                    global_state[key] = global_state[key].to(global_encoder.state_dict()[key].dtype)
         
         # Update global encoder
         global_encoder.load_state_dict(global_state)
