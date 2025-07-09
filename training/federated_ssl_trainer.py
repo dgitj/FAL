@@ -86,12 +86,18 @@ class FederatedSSLTrainer:
                 transform=ssl_transform
             )
             
+            # Ensure batch size is not larger than dataset
+            effective_batch_size = min(self.config.SSL_BATCH_SIZE, len(data_splits[c]))
+            if effective_batch_size < self.config.SSL_BATCH_SIZE:
+                print(f"Warning: Client {c} has only {len(data_splits[c])} samples, "
+                      f"reducing batch size from {self.config.SSL_BATCH_SIZE} to {effective_batch_size}")
+            
             client_loader = DataLoader(
                 ssl_dataset,
-                batch_size=self.config.SSL_BATCH_SIZE,
+                batch_size=effective_batch_size,
                 shuffle=True,
                 num_workers=0,  # Set to 0 for Windows compatibility
-                drop_last=True,  # Important for batch norm
+                drop_last=True if effective_batch_size > 1 else False,  # Only drop last if we have more than 1 batch
                 pin_memory=True
             )
             client_loaders.append(client_loader)
@@ -177,6 +183,12 @@ class FederatedSSLTrainer:
                 # Compute SimCLR loss
                 loss = self._simclr_loss(z1, z2)
                 
+                # Debug: Check if loss is reasonable
+                if batch_idx == 0 and epoch == 0:
+                    print(f"  Initial loss: {loss.item():.4f}")
+                    print(f"  z1 mean: {z1.mean().item():.4f}, std: {z1.std().item():.4f}")
+                    print(f"  z2 mean: {z2.mean().item():.4f}, std: {z2.std().item():.4f}")
+                
                 # Backward pass
                 optimizer.zero_grad()
                 loss.backward()
@@ -201,12 +213,21 @@ class FederatedSSLTrainer:
         """
         batch_size = z1.shape[0]
         
+        # Check for feature collapse
+        if torch.isnan(z1).any() or torch.isnan(z2).any():
+            print("WARNING: NaN detected in projections!")
+            
         # Concatenate projections
         z = torch.cat([z1, z2], dim=0)  # [2*batch_size, projection_dim]
         
         # Compute similarity matrix
         sim = F.cosine_similarity(z.unsqueeze(1), z.unsqueeze(0), dim=2)
         sim = sim / self.temperature
+        
+        # Debug: Check similarity matrix
+        if torch.isnan(sim).any():
+            print("WARNING: NaN in similarity matrix!")
+            print(f"z norms: min={z.norm(dim=1).min():.4f}, max={z.norm(dim=1).max():.4f}")
         
         # Create labels - positive pairs are (i, i+batch_size)
         labels = torch.cat([torch.arange(batch_size) + batch_size,
@@ -219,6 +240,11 @@ class FederatedSSLTrainer:
         
         # Compute cross-entropy loss
         loss = F.cross_entropy(sim, labels)
+        
+        # Debug: Check if loss is reasonable
+        if loss.item() > 10 or loss.item() < 0.1:
+            print(f"WARNING: Unusual loss value: {loss.item():.4f}")
+            print(f"Similarity matrix stats: min={sim.min():.4f}, max={sim.max():.4f}, mean={sim.mean():.4f}")
         
         return loss
     

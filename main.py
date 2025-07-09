@@ -290,7 +290,9 @@ def main():
         
         # SSL Pre-training if enabled
         if config.USE_SSL_PRETRAIN:
-            print("\n=== Starting Federated SSL Pre-training ===")
+            print("\n" + "="*70)
+            print("=== Starting Federated SSL Pre-training ===")
+            print("="*70)
             
             # Get the base dataset without augmentations for SSL
             # (SSL will apply its own augmentations)
@@ -310,6 +312,36 @@ def main():
                 trial_seed=trial_seed,
                 base_dataset=ssl_dataset
             )
+
+             # Test SSL features quality
+            print("\n=== Testing SSL Feature Quality ===")
+            ssl_pretrained_encoder.eval()
+            with torch.no_grad():
+                # Get a few random images from the dataset
+                test_indices = [0, 100, 200, 300, 400]
+                test_transform = test_transform  # Use the test transform from earlier
+                
+                features = []
+                for idx in test_indices:
+                    img, _ = cifar10_test[idx]  # Use test dataset with transform
+                    img = img.unsqueeze(0).to(device)
+                    feat = ssl_pretrained_encoder(img)
+                    features.append(feat)
+                
+                # Check feature diversity
+                similarities = []
+                for i in range(len(features)):
+                    for j in range(i+1, len(features)):
+                        sim = F.cosine_similarity(features[i], features[j])
+                        similarities.append(sim.item())
+                
+                print(f"Average feature similarity: {np.mean(similarities):.4f}")
+                print(f"Feature norm mean: {np.mean([f.norm().item() for f in features]):.4f}")
+                print(f"Feature norm std: {np.std([f.norm().item() for f in features]):.4f}")
+                
+                if np.mean(similarities) > 0.95:
+                    print("WARNING: Features are too similar - possible feature collapse!")
+
             
             # Create model with pre-trained encoder
             if config.DATASET == "MNIST":

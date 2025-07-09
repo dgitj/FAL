@@ -34,6 +34,12 @@ def get_simclr_augmentation(dataset_name, image_size=32):
     """
     
     if dataset_name in ['CIFAR10', 'CIFAR100']:
+        # Get dataset-specific normalization values
+        if dataset_name == 'CIFAR10':
+            normalize = transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
+        else:  # CIFAR100
+            normalize = transforms.Normalize([0.5071, 0.4867, 0.4408], [0.2675, 0.2565, 0.2761])
+            
         # Full augmentation pipeline for CIFAR
         transform = transforms.Compose([
             transforms.RandomResizedCrop(image_size, scale=(0.2, 1.0)),
@@ -43,7 +49,7 @@ def get_simclr_augmentation(dataset_name, image_size=32):
             ], p=0.8),
             transforms.RandomGrayscale(p=0.2),
             transforms.ToTensor(),
-            transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
+            normalize
         ])
         
     elif dataset_name == 'SVHN':
