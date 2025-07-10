@@ -1,6 +1,6 @@
-# models/ssl_models.py
+# models/ssl_models_fixed.py
 """
-SSL model components for federated self-supervised pre-training.
+FIXED SSL model components for federated self-supervised pre-training.
 Provides encoders and projection heads for SimCLR-style training.
 FIXED to match the exact PreAct_ResNet_Cifar architecture output format.
 """

@@ -11,6 +11,7 @@ import numpy as np
 import copy
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import torch.optim.lr_scheduler as lr_scheduler
@@ -262,6 +263,31 @@ def main():
     # Load datasets
     cifar10_train, cifar10_test, cifar10_select = load_datasets()
     
+    # Create test transform for SSL feature testing
+    import torchvision.transforms as T
+    if config.DATASET == "CIFAR10":
+        test_transform = T.Compose([
+            T.ToTensor(),
+            T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
+        ])
+    elif config.DATASET == "SVHN":
+        test_transform = T.Compose([
+            T.ToTensor(),
+            T.Normalize([0.4377, 0.4438, 0.4728], [0.1980, 0.2010, 0.1970])
+        ])
+    elif config.DATASET == "CIFAR100":
+        test_transform = T.Compose([
+            T.ToTensor(),
+            T.Normalize([0.5071, 0.4867, 0.4408], [0.2675, 0.2565, 0.2761])
+        ])
+    elif config.DATASET == "MNIST":
+        test_transform = T.Compose([
+            T.ToTensor(),
+            T.Normalize([0.1307], [0.3081])
+        ])
+    else:
+        test_transform = T.Compose([T.ToTensor()])
+    
     # Prepare for trials
     accuracies = [[] for _ in range(config.TRIALS)]
     
@@ -319,14 +345,28 @@ def main():
             with torch.no_grad():
                 # Get a few random images from the dataset
                 test_indices = [0, 100, 200, 300, 400]
-                test_transform = test_transform  # Use the test transform from earlier
                 
                 features = []
                 for idx in test_indices:
-                    img, _ = cifar10_test[idx]  # Use test dataset with transform
-                    img = img.unsqueeze(0).to(device)
-                    feat = ssl_pretrained_encoder(img)
+                    # Get image from test dataset
+                    img, _ = cifar10_test[idx]
+                    
+                    # Handle different image formats
+                    if isinstance(img, torch.Tensor):
+                        # Image is already a tensor (likely already transformed)
+                        if img.dim() == 3:  # CHW format
+                            img_tensor = img
+                        else:
+                            raise ValueError(f"Unexpected tensor shape: {img.shape}")
+                    else:
+                        # Image is PIL or numpy, apply transform
+                        img_tensor = test_transform(img)
+                    
+                    # Ensure tensor is on correct device and has batch dimension
+                    img_tensor = img_tensor.unsqueeze(0).to(device)
+                    feat = ssl_pretrained_encoder(img_tensor)
                     features.append(feat)
+                    print(f"Image {idx} - Feature shape: {feat.shape}, norm: {feat.norm().item():.4f}")
                 
                 # Check feature diversity
                 similarities = []
@@ -341,6 +381,10 @@ def main():
                 
                 if np.mean(similarities) > 0.95:
                     print("WARNING: Features are too similar - possible feature collapse!")
+                elif np.mean(similarities) < 0.3:
+                    print("SUCCESS: Features are diverse - SSL is working!")
+                else:
+                    print("OK: Features show moderate diversity")
 
             
             # Create model with pre-trained encoder
