@@ -56,13 +56,13 @@ BATCH = 128
 MOMENTUM = 0.9
 BETA = [2,2]
 
-# SSL Pre-training Configuration
-USE_SSL_PRETRAIN = False  # Set to True to enable SSL pre-training
+# SSL Pre-training Configuration - FIXED PARAMETERS
+USE_SSL_PRETRAIN = True  # Set to True to enable SSL pre-training
 SSL_METHOD = "SimCLR"  # Options: "SimCLR", "Rotation" (more methods can be added)
-SSL_ROUNDS = 30  # Number of federated rounds for SSL pre-training (reduced from 50)
-SSL_LOCAL_EPOCHS = 3  # Number of local epochs per round during SSL (reduced from 5)
-SSL_BATCH_SIZE = 128  # Batch size for SSL (reduced from 256)
-SSL_LEARNING_RATE = 0.1  # Learning rate for SSL pre-training (reduced from 0.3)
-SSL_TEMPERATURE = 0.5  # Temperature parameter for SimCLR loss
-SSL_PROJECTION_DIM = 128  # Dimension of projection head output
+SSL_ROUNDS = 50  # Increased for better convergence
+SSL_LOCAL_EPOCHS = 5  # Increased for more local training
+SSL_BATCH_SIZE = 64  # Reduced to handle smaller client datasets better
+SSL_LEARNING_RATE = 0.5  # Increased significantly for contrastive learning
+SSL_TEMPERATURE = 0.1  # Lower temperature for harder negatives
+SSL_PROJECTION_DIM = 128  # Standard projection dimension
 FREEZE_ENCODER = False  # Whether to freeze encoder during active learning cycles
