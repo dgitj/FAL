@@ -578,10 +578,14 @@ def main():
         # Active learning cycles
         for cycle in range(config.CYCLES):
             # Create server model
-            if config.DATASET == "MNIST":
-                server = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes).to(device)
+            if config.USE_SSL_PRETRAIN:
+            # For SSL pretrained models, use a copy of the base_model
+                server = copy.deepcopy(base_model).to(device)
             else:
-                server = resnet.preact_resnet8_cifar(num_classes=num_classes).to(device)
+                if config.DATASET == "MNIST":
+                    server = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes).to(device)
+                else:
+                    server = resnet.preact_resnet8_cifar(num_classes=num_classes).to(device)
             models = {'clients': client_models, 'server': server}
             
             # Initialize criterion, optimizers, and schedulers
