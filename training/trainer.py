@@ -744,8 +744,9 @@ class FederatedTrainer:
         
         if path is None:
             # Create a default checkpoint directory
+            model_arch = getattr(self.config, 'MODEL_ARCHITECTURE', 'resnet8')  # Default to resnet8 if not set
             checkpoint_dir = os.path.join('checkpoints', 
-                                         f"{self.config.DATASET}_{self.config.ACTIVE_LEARNING_STRATEGY}", 
+                                         f"{self.config.DATASET}_{model_arch}_{self.config.ACTIVE_LEARNING_STRATEGY}", 
                                          f"clients_{self.config.CLIENTS}_alpha_{self.config.ALPHA}_seed_{self.config.SEED}")
             os.makedirs(checkpoint_dir, exist_ok=True)
             path = os.path.join(checkpoint_dir, f"checkpoint_cycle_{cycle}_round_{round_in_cycle}.pt")
@@ -779,9 +780,10 @@ class FederatedTrainer:
             'loss_weight_list': [w.cpu().tolist() for w in self.loss_weight_list],  # Convert tensors to lists
             'client_class_distributions': self.client_class_distributions,
             'global_class_distribution': self.global_class_distribution,
-            'model_architecture': 'mnist' if self.config.DATASET == 'MNIST' else 'cifar',  # Store architecture type
+            'model_architecture': getattr(self.config, 'MODEL_ARCHITECTURE', 'resnet8'),  # Store model architecture
             'config': {
                 'DATASET': self.config.DATASET,
+                'MODEL_ARCHITECTURE': getattr(self.config, 'MODEL_ARCHITECTURE', 'resnet8'),
                 'ACTIVE_LEARNING_STRATEGY': self.config.ACTIVE_LEARNING_STRATEGY,
                 'CLIENTS': self.config.CLIENTS,
                 'ALPHA': self.config.ALPHA,
@@ -842,9 +844,16 @@ class FederatedTrainer:
         
         # Verify model architecture if the field exists (for checkpoints saved with the updated code)
         if 'model_architecture' in checkpoint:
-            expected_arch = 'mnist' if self.config.DATASET == 'MNIST' else 'cifar'
-            if checkpoint['model_architecture'] != expected_arch:
-                raise ValueError(f"Architecture mismatch: Checkpoint was created with {checkpoint['model_architecture']} architecture, but current dataset requires {expected_arch} architecture.")
+            current_arch = getattr(self.config, 'MODEL_ARCHITECTURE', 'resnet8')
+            checkpoint_arch = checkpoint['model_architecture']
+            
+            # For backward compatibility, translate old architecture naming
+            if checkpoint_arch in ['mnist', 'cifar']:
+                # Old checkpoint format - assume resnet8
+                checkpoint_arch = 'resnet8'
+            
+            if checkpoint_arch != current_arch:
+                raise ValueError(f"Architecture mismatch: Checkpoint was created with {checkpoint_arch} architecture, but current config uses {current_arch} architecture.")
         
         # Load server state
         models['server'].load_state_dict(checkpoint['server_state']['model'])
