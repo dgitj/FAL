@@ -324,11 +324,11 @@ class PseudoClassBalancedVarianceEntropySampler:
         """
         print(f"[PseudoEntropy] Assigning pseudo-labels to unlabeled data using models")
         
-        # Track which classes have low std_dev (< 12)
+        # Track which classes have low std_dev (< 15)
         low_variance_classes = set()
         if class_std_devs is not None:
             for cls, std_dev in class_std_devs.items():
-                if std_dev < 12.0:  
+                if std_dev < 12.0:  # Using the threshold
                     low_variance_classes.add(cls)
                     print(f"[PseudoEntropy] Class {cls} has low variance (std_dev = {std_dev:.5f}) - using combined models")
         
@@ -562,7 +562,7 @@ class PseudoClassBalancedVarianceEntropySampler:
             class_std_devs=class_std_devs  # Pass class standard deviations
         )
         
-        
+        """
         # Step 4: No filtering by confidence threshold - using all samples
         print(f"[PseudoEntropy] Using all {len(indices)} samples for selection")
         
@@ -677,7 +677,22 @@ class PseudoClassBalancedVarianceEntropySampler:
                 selected_samples.extend(additional_indices)
                 
                 print(f"[PseudoEntropy] Selected {additional} last-resort samples based on entropy")
+        """
+
+            # ADD THIS FOR THE PURE ENTROPY-BASED SELECTION
+        print(f"[PseudoEntropy] ABLATION: Selecting top {num_samples} samples with highest entropy (ignoring class balance)")
         
+        # Create a list of (index, entropy) tuples
+        samples_with_entropy = list(zip(indices, entropy_scores))
+        
+        # Sort by entropy (highest first)
+        samples_with_entropy.sort(key=lambda x: x[1], reverse=True)
+        
+        # Select top samples by entropy
+        num_to_select = min(num_samples, len(samples_with_entropy))
+        selected_samples = [sample[0] for sample in samples_with_entropy[:num_to_select]]
+
+        # END ABLATION
 
         # Calculate remaining unlabeled samples
         remaining_unlabeled = [idx for idx in unlabeled_set if idx not in selected_samples]
