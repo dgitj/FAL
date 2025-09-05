@@ -15,11 +15,13 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data.sampler import SubsetRandomSampler
-
+#import matplotlib.pyplot as plt
 
 # Import models
 import models.preact_resnet as resnet
 import models.preact_resnet_mnist as resnet_mnist
+import models.mobilenet_v2 as mobilenet
+import models.mobilenet_v2_mnist as mobilenet_mnist
 
 
 # Import data utilities
@@ -57,6 +59,7 @@ def parse_arguments():
     parser.add_argument('--max-rounds', type=int, help='Maximum communication rounds per cycle')
     parser.add_argument('--check-convergence', action='store_true', help='Monitor convergence before AL starts')
     parser.add_argument('--dataset', type=str, choices=['CIFAR10', 'SVHN', 'CIFAR100', 'MNIST'], help='Dataset to use')
+    parser.add_argument('--model', type=str, choices=['resnet8', 'mobilenet_v2'], help='Model architecture to use')
     
     # Add checkpoint arguments
     parser.add_argument('--no-checkpoints', action='store_true', help='Disable automatic checkpoint saving')
@@ -200,7 +203,6 @@ def create_val_loader(dataset, trial_seed, indices=None, batch_size=config.BATCH
     
     return val_loader
 
-
 def main():
     """Main function to run federated active learning experiments."""
     # Parse arguments
@@ -260,6 +262,10 @@ def main():
     if args.seed:
         config.SEED = args.seed
         print(f"Setting random seed to: {config.SEED}")
+    
+    if args.model:
+        config.MODEL_ARCHITECTURE = args.model
+        print(f"Using model architecture: {config.MODEL_ARCHITECTURE}")
     
     # Early stopping settings
     max_rounds = args.max_rounds if args.max_rounds else config.COMMUNICATION
@@ -356,18 +362,37 @@ def main():
             print(f"Setting PseudoEntropy confidence threshold to: {args.confidence}")
         
         # Prepare client data
-        if config.DATASET == "MNIST":
-            resnet8 = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes)
+        # Initialize model based on architecture setting
+        if config.MODEL_ARCHITECTURE == "resnet8":
+            if config.DATASET == "MNIST":
+                base_model = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes)
+            else:
+                base_model = resnet.preact_resnet8_cifar(num_classes=num_classes)
+        elif config.MODEL_ARCHITECTURE == "mobilenet_v2":
+            if config.DATASET == "MNIST":
+                base_model = mobilenet_mnist.mobilenet_v2_mnist(num_classes=num_classes)
+            else:
+                base_model = mobilenet.mobilenet_v2_cifar(num_classes=num_classes)
         else:
-            resnet8 = resnet.preact_resnet8_cifar(num_classes=num_classes)
+            raise ValueError(f"Unknown model architecture: {config.MODEL_ARCHITECTURE}")
+        
+        # For compatibility, keep the variable name as resnet8
+        resnet8 = base_model
         client_models = []
         data_list = []
         total_data_num = [len(data_splits[c]) for c in range(config.CLIENTS)]
         total_data_num = np.array(total_data_num)
         
         # Calculate base and budget sizes
-        base = np.ceil((config.BASE / config.NUM_TRAIN) * total_data_num).astype(int)
-        add = np.ceil((config.BUDGET / config.NUM_TRAIN) * total_data_num).astype(int)
+        # base = np.ceil((config.BASE / config.NUM_TRAIN) * total_data_num).astype(int)
+        # add = np.ceil((config.BUDGET / config.NUM_TRAIN) * total_data_num).astype(int)
+        
+        base_value = int(np.ceil(config.BASE / config.CLIENTS))
+        budget_value = int(np.ceil(config.BUDGET / config.CLIENTS))
+
+        # Create arrays with these values for all clients
+        base = np.full(config.CLIENTS, base_value)
+        add = np.full(config.CLIENTS, budget_value)
         print('Base number:', base)
         print('Budget each round:', add)
         
@@ -386,10 +411,18 @@ def main():
             print(f"\n===== Resuming from checkpoint: {args.resume_from} =====")
             
             # Create temporary models, optimizers, and schedulers to load the checkpoint
-            if config.DATASET == "MNIST":
-                temp_server = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes).to(device)
+            if config.MODEL_ARCHITECTURE == "resnet8":
+                if config.DATASET == "MNIST":
+                    temp_server = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes).to(device)
+                else:
+                    temp_server = resnet.preact_resnet8_cifar(num_classes=num_classes).to(device)
+            elif config.MODEL_ARCHITECTURE == "mobilenet_v2":
+                if config.DATASET == "MNIST":
+                    temp_server = mobilenet_mnist.mobilenet_v2_mnist(num_classes=num_classes).to(device)
+                else:
+                    temp_server = mobilenet.mobilenet_v2_cifar(num_classes=num_classes).to(device)
             else:
-                temp_server = resnet.preact_resnet8_cifar(num_classes=num_classes).to(device)
+                raise ValueError(f"Unknown model architecture: {config.MODEL_ARCHITECTURE}")
             temp_clients = [copy.deepcopy(temp_server) for _ in range(config.CLIENTS)]
             
             temp_optim_clients = []
@@ -476,10 +509,18 @@ def main():
                 
                 # Initialize client models (their weights will be loaded from checkpoint at training time)
                 # Important: ensure we're using the same architecture type when resuming
-                if config.DATASET == "MNIST":
-                    client_model = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes)
+                if config.MODEL_ARCHITECTURE == "resnet8":
+                    if config.DATASET == "MNIST":
+                        client_model = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes)
+                    else:
+                        client_model = resnet.preact_resnet8_cifar(num_classes=num_classes)
+                elif config.MODEL_ARCHITECTURE == "mobilenet_v2":
+                    if config.DATASET == "MNIST":
+                        client_model = mobilenet_mnist.mobilenet_v2_mnist(num_classes=num_classes)
+                    else:
+                        client_model = mobilenet.mobilenet_v2_cifar(num_classes=num_classes)
                 else:
-                    client_model = resnet.preact_resnet8_cifar(num_classes=num_classes)
+                    raise ValueError(f"Unknown model architecture: {config.MODEL_ARCHITECTURE}")
                 client_models.append(copy.deepcopy(client_model).to(device))
                 
                 # Record data distribution for logging
@@ -665,10 +706,18 @@ def main():
         # Active learning cycles
         for cycle in range(cycle_start, config.CYCLES):
             # Create server model
-            if config.DATASET == "MNIST":
-                server = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes).to(device)
+            if config.MODEL_ARCHITECTURE == "resnet8":
+                if config.DATASET == "MNIST":
+                    server = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes).to(device)
+                else:
+                    server = resnet.preact_resnet8_cifar(num_classes=num_classes).to(device)
+            elif config.MODEL_ARCHITECTURE == "mobilenet_v2":
+                if config.DATASET == "MNIST":
+                    server = mobilenet_mnist.mobilenet_v2_mnist(num_classes=num_classes).to(device)
+                else:
+                    server = mobilenet.mobilenet_v2_cifar(num_classes=num_classes).to(device)
             else:
-                server = resnet.preact_resnet8_cifar(num_classes=num_classes).to(device)
+                raise ValueError(f"Unknown model architecture: {config.MODEL_ARCHITECTURE}")
             models = {'clients': client_models, 'server': server}
             
             # Initialize criterion, optimizers, and schedulers
@@ -698,6 +747,45 @@ def main():
             optimizers = {'clients': optim_clients, 'server': optim_server}
             schedulers = {'clients': sched_clients, 'server': sched_server}
             
+            # Train with convergence monitoring if requested
+            if cycle == 0 and check_convergence:
+                print("\n===== Monitoring model convergence before active learning =====\n")
+                # Run with convergence monitoring for first cycle
+                train_stats = trainer.train(
+                    models, criterion, optimizers, schedulers, dataloaders, config.EPOCH, trial_seed,
+                    val_loader=dataloaders['val'], max_rounds=max_rounds
+                )
+                
+                # Plot convergence
+                if train_stats['rounds_completed'] > 0:
+                    conv_plot_path = os.path.join(viz_dir, f"convergence_trial_{trial+1}_cycle_{cycle+1}.png")
+                    plot_convergence(
+                        train_stats['train_losses'],
+                        train_stats['val_accuracies'],
+                        list(range(1, train_stats['rounds_completed'] + 1)),
+                        conv_plot_path,
+                        title=f"Model Convergence - Trial {trial+1} Cycle {cycle+1}"
+                    )
+                    
+                    # Print convergence summary
+                    print("\n===== Convergence Summary =====")
+                    print(f"Rounds completed: {train_stats['rounds_completed']}/{max_rounds}")
+                    print(f"Best validation accuracy: {train_stats['best_val_accuracy']:.2f}%")
+                    
+                    # Check if convergence appears to be reached
+                    if len(train_stats['val_accuracies']) > 2:
+                        last_3_accs = train_stats['val_accuracies'][-3:]
+                        acc_diff = max(last_3_accs) - min(last_3_accs)
+                        if acc_diff < 0.5:  # Less than 0.5% change in last 3 rounds
+                            print(f"Convergence appears stable (accuracy change < 0.5% in last 3 rounds)")
+                        else:
+                            print(f"Convergence may not be stable yet (accuracy change of {acc_diff:.2f}% in last 3 rounds)")
+                    print("=============================\n")
+            else:
+                # Regular training for subsequent cycles
+                train_stats = trainer.train(
+                    models, criterion, optimizers, schedulers, dataloaders, config.EPOCH, trial_seed
+                )
             
             # Update class distribution statistics after selection
             print("\n===== Updating Class Distribution Analysis =====\n")

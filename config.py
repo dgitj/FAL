@@ -5,7 +5,7 @@
 DATASET = "CIFAR10"  # Options are "CIFAR10", "SVHN", "CIFAR100", and "MNIST"
 
 # directory paths for datasets and number of classes
-if DATASET == "CIFAR10":
+if DATASET == "MNIST":
     DATA_ROOT = 'data/cifar-10-batches-py'
     NUM_CLASSES = 10
 elif DATASET == "SVHN":
@@ -20,6 +20,11 @@ elif DATASET == "MNIST":
 else:
     DATA_ROOT = 'data/cifar-10-batches-py'  # Default fallback
     NUM_CLASSES = 10
+
+# Model Architecture Options:
+# - "resnet8" (default)
+# - "mobilenet_v2"
+MODEL_ARCHITECTURE = "mobilenet_v2"  # Options are "resnet8" and "mobilenet_v"
 
 # Active Learning Strategy Options:
 # - "KAFAL"
@@ -41,10 +46,10 @@ else:
 # - "HybridEntropyKAFALClassDifferentiated"
 # - "AblationClassUncertainty"
 
-ACTIVE_LEARNING_STRATEGY = "PseudoEntropyVariance"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "GlobalOptimal", "CoreSet", "CoreSetGlobalOptimal", "PseudoConfidence", "PseudoEntropy", "PseudoEntropyVariance", "AdaptiveEntropy", "HybridEntropyKAFAL", "HybridEntropyKAFALEntropyFirst", "HybridEntropyKAFALClassDifferentiated", and "AblationClassUncertainty"
+ACTIVE_LEARNING_STRATEGY = "BADGE"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "GlobalOptimal", "CoreSet", "CoreSetGlobalOptimal", "PseudoConfidence", "PseudoEntropy", "PseudoEntropyVariance", "AdaptiveEntropy", "HybridEntropyKAFAL", "HybridEntropyKAFALEntropyFirst", "HybridEntropyKAFALClassDifferentiated", and "AblationClassUncertainty"
 
 # random seed
-SEED = 44
+SEED = 4000044
 TRIAL_SEED_OFFSET = 2000000
 
 # dirichlet partition non-iid level
@@ -54,9 +59,9 @@ ALPHA = 0.1
 BUDGET  = 2500
 BASE = 5000
 EPOCH=5
-COMMUNICATION=5
-CYCLES=3
-RATIO=0.1
+COMMUNICATION=100
+CYCLES=7
+RATIO=1.0
 CLIENTS=10
 TRIALS=1
 LOCAL_MODEL_UPDATE = "Vanilla" # Options are "Vanilla", "SimpleContrastive", "DebiasedContrastive", and "KFCU"  
