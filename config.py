@@ -23,7 +23,7 @@ else:
 
 MODEL_ARCHITECTURE = "resnet8"  # Options are "resnet8" and "mobilenet_v"
 
-ACTIVE_LEARNING_STRATEGY = "Entropy"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "PseudoEntropyVariance", and "AblationClassUncertainty"
+ACTIVE_LEARNING_STRATEGY = "KAFAL"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "PseudoEntropyVariance", and "AblationClassUncertainty"
 
 # random seed
 SEED = 44
@@ -41,17 +41,7 @@ CYCLES=2
 RATIO=1.0
 CLIENTS=5
 TRIALS=1
-LOCAL_MODEL_UPDATE = "Vanilla" # Options are "Vanilla", "SimpleContrastive", "DebiasedContrastive", and "KFCU"  
-
-# Simple Contrastive Loss settings
-CONTRASTIVE_TEMPERATURE = 0.5
-CONTRASTIVE_WEIGHT = 1.75
-
-# Debiased Contrastive Loss settings
-DCL_TEMPERATURE = 0.5     # Temperature parameter for DCL
-DCL_BETA = 0.9           # Beta parameter for negative sample re-weighting
-DCL_LAMBDA = 1.0         # Weight for DCL when combined with cross-entropy
-
+LOCAL_MODEL_UPDATE = "Vanilla" # Options are "Vanilla" and "KFCU"  
 
 # training
 LR = 0.1

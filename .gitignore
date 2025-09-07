@@ -1,0 +1,25 @@
+# Ignore data and output folders
+/data/
+/distribution/
+/checkpoints/
+/analysis_logs/
+
+# Optional: ignore Python cache & virtualenvs (falls du noch nicht drin hast)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.egg-info/
+*.egg
+*.log
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE/project files (optional, falls du mit VSCode oder PyCharm arbeitest)
+.vscode/
+.idea/
+/data/
