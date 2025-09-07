@@ -61,11 +61,6 @@ def parse_arguments():
     parser.add_argument('--dataset', type=str, choices=['CIFAR10', 'SVHN', 'CIFAR100', 'MNIST'], help='Dataset to use')
     parser.add_argument('--model', type=str, choices=['resnet8', 'mobilenet_v2'], help='Model architecture to use')
     
-    # Add checkpoint arguments
-    parser.add_argument('--no-checkpoints', action='store_true', help='Disable automatic checkpoint saving')
-    parser.add_argument('--checkpoint-frequency', type=int, default=1, help='Save checkpoints every N cycles')
-    parser.add_argument('--resume-from', type=str, help='Resume training from a checkpoint file')
-    
     return parser.parse_args()
 
 
@@ -206,11 +201,7 @@ def create_val_loader(dataset, trial_seed, indices=None, batch_size=config.BATCH
 def main():
     """Main function to run federated active learning experiments."""
     # Parse arguments
-    args = parse_arguments()
-    
-    # Create checkpoints directory if checkpoints are enabled
-    if not args.no_checkpoints:
-        os.makedirs('checkpoints', exist_ok=True)
+    args = parse_arguments() 
     
     # Override configuration with command line arguments
     if args.strategy:
@@ -295,18 +286,6 @@ def main():
     
     # Prepare for trials
     accuracies = [[] for _ in range(config.TRIALS)]
-    
-    # If resuming, check if there's a previous accuracies file to load
-    if args.resume_from:
-        accuracies_path = os.path.join(os.path.dirname(args.resume_from), 'accuracies.npy')
-        if os.path.exists(accuracies_path):
-            try:
-                loaded_accuracies = np.load(accuracies_path, allow_pickle=True)
-                if isinstance(loaded_accuracies, np.ndarray) and loaded_accuracies.shape[0] == config.TRIALS:
-                    accuracies = loaded_accuracies.tolist()
-                    print(f"Loaded previous accuracies from {accuracies_path}")
-            except Exception as e:
-                print(f"Warning: Failed to load previous accuracies: {e}")
     
     # Extract all labels
     indices = list(range(len(cifar10_train)))
@@ -406,239 +385,66 @@ def main():
         # Track starting cycle for resuming from checkpoint
         cycle_start = 0
         
-        # Handle resuming from a checkpoint if specified
-        if args.resume_from:
-            print(f"\n===== Resuming from checkpoint: {args.resume_from} =====")
+        for c in range(config.CLIENTS):
+            # Setup deterministic data selection
+            client_worker_init_fn = get_seed_worker(trial_seed + c * 100)
+            g_labeled = torch.Generator()
+            g_labeled.manual_seed(trial_seed + c * 100 + 10000)
+            g_unlabeled = torch.Generator()
+            g_unlabeled.manual_seed(trial_seed + c * 100 + 20000)
             
-            # Create temporary models, optimizers, and schedulers to load the checkpoint
-            if config.MODEL_ARCHITECTURE == "resnet8":
-                if config.DATASET == "MNIST":
-                    temp_server = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes).to(device)
-                else:
-                    temp_server = resnet.preact_resnet8_cifar(num_classes=num_classes).to(device)
-            elif config.MODEL_ARCHITECTURE == "mobilenet_v2":
-                if config.DATASET == "MNIST":
-                    temp_server = mobilenet_mnist.mobilenet_v2_mnist(num_classes=num_classes).to(device)
-                else:
-                    temp_server = mobilenet.mobilenet_v2_cifar(num_classes=num_classes).to(device)
-            else:
-                raise ValueError(f"Unknown model architecture: {config.MODEL_ARCHITECTURE}")
-            temp_clients = [copy.deepcopy(temp_server) for _ in range(config.CLIENTS)]
+            data_list.append(data_splits[c])
+        
+            # Deterministic shuffling for initial split
+            init_sample_rng = np.random.RandomState(trial_seed + c * 100)
+            shuffled_indices = np.arange(len(data_splits[c]))
+            init_sample_rng.shuffle(shuffled_indices)
+            data_list[c] = [data_splits[c][i] for i in shuffled_indices]
             
-            temp_optim_clients = []
-            temp_sched_clients = []
-            for c in range(config.CLIENTS):
-                temp_optim_clients.append(optim.SGD(
-                    temp_clients[c].parameters(), 
-                    lr=config.LR,
-                    momentum=config.MOMENTUM, 
-                    weight_decay=config.WDECAY
-                ))
-                temp_sched_clients.append(lr_scheduler.MultiStepLR(temp_optim_clients[c], milestones=config.MILESTONES))
+            # Select initial labeled set
+            labeled_set_list.append(data_list[c][:base[c]])
             
-            temp_optim_server = optim.SGD(
-                temp_server.parameters(),
-                lr=config.LR,
-                momentum=config.MOMENTUM,
-                weight_decay=config.WDECAY
-            )
+            # Compute class distribution for client dataset
+            values, counts = np.unique(id2lab[np.array(data_list[c])], return_counts=True)
+            dictionary = dict(zip(values, counts))
+            ratio = np.zeros(num_classes)
+            ratio[values] = counts
+            ratio /= np.sum(counts)
+            data_ratio_list.append(ratio)
             
-            temp_sched_server = lr_scheduler.MultiStepLR(temp_optim_server, milestones=config.MILESTONES)
+            # Compute class distribution for labeled set
+            values, counts = np.unique(id2lab[np.array(labeled_set_list[c])], return_counts=True)
+            ratio = np.zeros(num_classes)
+            ratio[values] = counts
+            loss_weight_list.append(torch.tensor(ratio, dtype=torch.float32).to(device))
             
-            temp_models = {'server': temp_server, 'clients': temp_clients}
-            temp_optimizers = {'server': temp_optim_server, 'clients': temp_optim_clients}
-            temp_schedulers = {'server': temp_sched_server, 'clients': temp_sched_clients}
+            # Track samples per client
+            data_num.append(len(labeled_set_list[c]))
+            unlabeled_set_list.append(data_list[c][base[c]:])
             
-            # Load the checkpoint data
-            cycle_start, _, loaded_labeled_set_list, loaded_unlabeled_set_list, loaded_data_num = trainer.load_checkpoint(
-                temp_models, temp_optimizers, temp_schedulers, args.resume_from
-            )
+            # Create data loaders
+            private_train_loaders.append(DataLoader(
+                cifar10_train, 
+                batch_size=config.BATCH,
+                sampler=SubsetRandomSampler(labeled_set_list[c]),
+                num_workers=0,
+                worker_init_fn=client_worker_init_fn,
+                generator=g_labeled,
+                pin_memory=True
+            ))
             
-            # Move forward one cycle since we loaded the state at the end of cycle_start
-            cycle_start += 1
+            private_unlab_loaders.append(DataLoader(
+                cifar10_train, 
+                batch_size=config.BATCH,
+                sampler=SubsetRandomSampler(unlabeled_set_list[c]),
+                num_workers=0,
+                worker_init_fn=client_worker_init_fn,
+                generator=g_unlabeled,
+                pin_memory=True
+            ))
             
-            print(f"Loaded checkpoint successfully. Will resume from cycle {cycle_start}")
-            
-            # Use the loaded data instead of initializing from scratch
-            labeled_set_list = loaded_labeled_set_list
-            unlabeled_set_list = loaded_unlabeled_set_list
-            data_num = np.array(loaded_data_num)
-            
-            # Create data loaders from restored data
-            private_train_loaders = []
-            private_unlab_loaders = []
-            
-            # Create dataloaders from the loaded data
-            for c in range(config.CLIENTS):
-                # Calculate ratio for class weights
-                if labeled_set_list and len(labeled_set_list[c]) > 0:
-                    values, counts = np.unique(id2lab[np.array(labeled_set_list[c])], return_counts=True)
-                    ratio = np.zeros(num_classes)
-                    ratio[values] = counts
-                    loss_weight_list.append(torch.tensor(ratio, dtype=torch.float32).to(device))
-                else:
-                    # Default weights if no labeled data
-                    loss_weight_list.append(torch.ones(num_classes, dtype=torch.float32).to(device))
-                    
-                # Create data loaders
-                client_worker_init_fn = get_seed_worker(trial_seed + c * 100)
-                g_labeled = torch.Generator()
-                g_labeled.manual_seed(trial_seed + c * 100 + 10000)
-                g_unlabeled = torch.Generator()
-                g_unlabeled.manual_seed(trial_seed + c * 100 + 20000)
-                
-                private_train_loaders.append(DataLoader(
-                    cifar10_train, 
-                    batch_size=config.BATCH,
-                    sampler=SubsetRandomSampler(labeled_set_list[c]),
-                    num_workers=0,
-                    worker_init_fn=client_worker_init_fn,
-                    generator=g_labeled,
-                    pin_memory=True
-                ))
-                
-                private_unlab_loaders.append(DataLoader(
-                    cifar10_train, 
-                    batch_size=config.BATCH,
-                    sampler=SubsetRandomSampler(unlabeled_set_list[c]),
-                    num_workers=0,
-                    worker_init_fn=client_worker_init_fn,
-                    generator=g_unlabeled,
-                    pin_memory=True
-                ))
-                
-                # Initialize client models (their weights will be loaded from checkpoint at training time)
-                # Important: ensure we're using the same architecture type when resuming
-                if config.MODEL_ARCHITECTURE == "resnet8":
-                    if config.DATASET == "MNIST":
-                        client_model = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes)
-                    else:
-                        client_model = resnet.preact_resnet8_cifar(num_classes=num_classes)
-                elif config.MODEL_ARCHITECTURE == "mobilenet_v2":
-                    if config.DATASET == "MNIST":
-                        client_model = mobilenet_mnist.mobilenet_v2_mnist(num_classes=num_classes)
-                    else:
-                        client_model = mobilenet.mobilenet_v2_cifar(num_classes=num_classes)
-                else:
-                    raise ValueError(f"Unknown model architecture: {config.MODEL_ARCHITECTURE}")
-                client_models.append(copy.deepcopy(client_model).to(device))
-                
-                # Record data distribution for logging
-                trainer.update_client_distribution(c, labeled_set_list[c], cifar10_train)
-                
-                # Log class statistics for visualization
-                class_labels = [id2lab[idx] for idx in labeled_set_list[c]]
-                logger.log_sample_classes(cycle_start-1, class_labels, c)
-            
-            # When resuming, we need to make sure the class distributions are properly restored
-            # Also ensure data_num is an array
-            data_num = np.array(data_num)
-            
-            # Update client distributions in the trainer
-            for c in range(config.CLIENTS):
-                trainer.update_client_distribution(c, labeled_set_list[c], cifar10_train)
-                
-            # Get the variance stats and global distribution from the trainer
-            variance_stats = trainer.analyze_class_distribution_variance()
-            global_distribution = trainer.get_global_distribution()
-            
-            print("\n===== Restored Class Distribution Analysis =====")
-            print(f"Global distribution: {global_distribution if global_distribution else 'None'}")
-            if variance_stats:
-                print(f"Total variance across classes: {variance_stats['total_variance']:.6f}")
-                print(f"Average coefficient of variation: {variance_stats['avg_cv']:.2f}%")
-            else:
-                print("No variance statistics available.")
-            
-            # Set up labeled classes for strategy manager
-            labeled_set_classes_list = []
-            for c in range(config.CLIENTS):
-                if labeled_set_list[c]:
-                    labeled_classes = [id2lab[idx] for idx in labeled_set_list[c]]
-                    labeled_set_classes_list.append(labeled_classes)
-                else:
-                    labeled_set_classes_list.append([])
-            
-            # Initialize strategy manager with the loaded data
-            strategy_params['loss_weight_list'] = loss_weight_list  # Update with loaded weights
-            strategy_manager = StrategyManager(**strategy_params)
-            strategy_manager.set_total_clients(config.CLIENTS)
-            strategy_manager.set_labeled_set_list(labeled_set_list)
-            strategy_manager.set_labeled_set_classes_list(labeled_set_classes_list)
-            
-            # Ensure the accuracies list for this trial is initialized properly
-            if cycle_start > 0 and trial < len(accuracies):
-                # If we have accuracies from previous cycles, they should be loaded
-                # Otherwise, check if we need to initialize with placeholder values
-                if len(accuracies[trial]) < cycle_start:
-                    print(f"Note: Initializing missing accuracy entries for {cycle_start - len(accuracies[trial])} previous cycles")
-                    # Fill with placeholder values - these will be replaced if we evaluate the model
-                    accuracies[trial].extend([0.0] * (cycle_start - len(accuracies[trial])))
-            
-            print(f"\n===== Resuming training from cycle {cycle_start}/{config.CYCLES} =====")
-        else:
-            # No checkpoint, proceed with normal initialization            
-            # Prepare initial data pools for each client
-            for c in range(config.CLIENTS):
-                # Setup deterministic data selection
-                client_worker_init_fn = get_seed_worker(trial_seed + c * 100)
-                g_labeled = torch.Generator()
-                g_labeled.manual_seed(trial_seed + c * 100 + 10000)
-                g_unlabeled = torch.Generator()
-                g_unlabeled.manual_seed(trial_seed + c * 100 + 20000)
-                
-                data_list.append(data_splits[c])
-            
-                # Deterministic shuffling for initial split
-                init_sample_rng = np.random.RandomState(trial_seed + c * 100)
-                shuffled_indices = np.arange(len(data_splits[c]))
-                init_sample_rng.shuffle(shuffled_indices)
-                data_list[c] = [data_splits[c][i] for i in shuffled_indices]
-                
-                # Select initial labeled set
-                labeled_set_list.append(data_list[c][:base[c]])
-                
-                # Compute class distribution for client dataset
-                values, counts = np.unique(id2lab[np.array(data_list[c])], return_counts=True)
-                dictionary = dict(zip(values, counts))
-                ratio = np.zeros(num_classes)
-                ratio[values] = counts
-                ratio /= np.sum(counts)
-                data_ratio_list.append(ratio)
-                
-                # Compute class distribution for labeled set
-                values, counts = np.unique(id2lab[np.array(labeled_set_list[c])], return_counts=True)
-                ratio = np.zeros(num_classes)
-                ratio[values] = counts
-                loss_weight_list.append(torch.tensor(ratio, dtype=torch.float32).to(device))
-                
-                # Track samples per client
-                data_num.append(len(labeled_set_list[c]))
-                unlabeled_set_list.append(data_list[c][base[c]:])
-                
-                # Create data loaders
-                private_train_loaders.append(DataLoader(
-                    cifar10_train, 
-                    batch_size=config.BATCH,
-                    sampler=SubsetRandomSampler(labeled_set_list[c]),
-                    num_workers=0,
-                    worker_init_fn=client_worker_init_fn,
-                    generator=g_labeled,
-                    pin_memory=True
-                ))
-                
-                private_unlab_loaders.append(DataLoader(
-                    cifar10_train, 
-                    batch_size=config.BATCH,
-                    sampler=SubsetRandomSampler(unlabeled_set_list[c]),
-                    num_workers=0,
-                    worker_init_fn=client_worker_init_fn,
-                    generator=g_unlabeled,
-                    pin_memory=True
-                ))
-                
-                # Initialize client models
-                client_models.append(copy.deepcopy(resnet8).to(device))
+            # Initialize client models
+            client_models.append(copy.deepcopy(resnet8).to(device))
         
         data_num = np.array(data_num)
 
@@ -682,26 +488,21 @@ def main():
         trainer.set_data_num(data_num)
         
         # Calculate initial class distributions and variance analysis (only once)
-        if cycle_start == 0:  # Only do this for fresh training, not when resuming
-            print("\n===== Initial Class Distribution Analysis =====")
-            for c in range(config.CLIENTS):
-                trainer.update_client_distribution(c, labeled_set_list[c], cifar10_train)
-            
-            # Analyze variance across clients
-            variance_stats = trainer.analyze_class_distribution_variance()
-            
-            # Calculate global class distribution
-            global_distribution = trainer.aggregate_class_distributions()
+        print("\n===== Initial Class Distribution Analysis =====")
+        for c in range(config.CLIENTS):
+            trainer.update_client_distribution(c, labeled_set_list[c], cifar10_train)
+        
+        # Analyze variance across clients
+        variance_stats = trainer.analyze_class_distribution_variance()
+        
+        # Calculate global class distribution
+        global_distribution = trainer.aggregate_class_distributions()
         
         # Check if strategy needs global distribution
         if config.ACTIVE_LEARNING_STRATEGY in ["PseudoEntropyVariance"] and global_distribution is None:
             raise ValueError("Error: PseudoEntropyVariance strategy requires global class distribution, but none was computed. "
                             "Make sure there are labeled samples available on all clients.")
         
-        # Variables to store the final model and optimizer states
-        final_models = None
-        final_optimizers = None
-        final_schedulers = None
         
         # Active learning cycles
         for cycle in range(cycle_start, config.CYCLES):
@@ -934,41 +735,12 @@ def main():
             # Record accuracy
             accuracies[trial].append(acc_server)
             
-            # Save checkpoint after each cycle if enabled (by default)
-            if not args.no_checkpoints and (cycle + 1) % args.checkpoint_frequency == 0:
-                print(f"\n===== Saving checkpoint after cycle {cycle + 1} =====")
-                checkpoint_path = trainer.save_checkpoint(
-                    models, optimizers, schedulers, cycle, config.COMMUNICATION,
-                    labeled_set_list, unlabeled_set_list, data_num
-                )
-                print(f"Checkpoint saved to: {checkpoint_path}")
-            
-            # Store the final model and optimizer states for the final checkpoint
-            final_models = models
-            final_optimizers = optimizers
-            final_schedulers = schedulers
             
             # Save logs
             logger.save_data()
         
         print('Accuracies for trial {}:'.format(trial), accuracies[trial])
-
-        # Save checkpoint at the end of the training
-        if not args.no_checkpoints and final_models is not None:
-            print(f"\n===== Saving final checkpoint for trial {trial+1} =====")
-            checkpoint_path = trainer.save_checkpoint(
-                final_models, final_optimizers, final_schedulers, 
-                config.CYCLES-1, config.COMMUNICATION,
-                labeled_set_list, unlabeled_set_list, data_num
-            )
-            print(f"Final checkpoint saved to: {checkpoint_path}")
             
-            # Also save the accuracies to a file in the same directory
-            accuracies_path = os.path.join(os.path.dirname(checkpoint_path), 'accuracies.npy')
-            np.save(accuracies_path, np.array(accuracies, dtype=object))
-            print(f"Accuracies saved to: {accuracies_path}")
-            
-        # Add this at the end of each trial (around line 380-390)
         if config.ACTIVE_LEARNING_STRATEGY == "GlobalOptimal":
             print("\n========== GLOBAL OPTIMAL STRATEGY SUMMARY ==========")
             print(f"Trial {trial+1}/{config.TRIALS}")
