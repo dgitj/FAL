@@ -357,7 +357,7 @@ def main():
         }
         
         # Add confidence threshold for PseudoEntropy if specified
-        if config.ACTIVE_LEARNING_STRATEGY in ["PseudoEntropy", "PseudoConfidence", "PseudoEntropyVariance"] and args.confidence is not None:
+        if config.ACTIVE_LEARNING_STRATEGY in ["PseudoEntropyVariance"] and args.confidence is not None:
             strategy_params['confidence_threshold'] = args.confidence
             print(f"Setting PseudoEntropy confidence threshold to: {args.confidence}")
         
@@ -652,7 +652,7 @@ def main():
         strategy_manager = StrategyManager(**strategy_params)
         
         # If using strategies that need labeled set list or total clients
-        if config.ACTIVE_LEARNING_STRATEGY in ["GlobalOptimal", "CoreSetGlobalOptimal", "CoreSet", "PseudoEntropy", "PseudoConfidence", "HybridEntropyKAFAL", "PseudoEntropyVariance"]:
+        if config.ACTIVE_LEARNING_STRATEGY in ["CoreSet", "PseudoEntropyVariance"]:
             strategy_manager.set_total_clients(config.CLIENTS)
             strategy_manager.set_labeled_set_list(labeled_set_list)
 
@@ -694,8 +694,8 @@ def main():
             global_distribution = trainer.aggregate_class_distributions()
         
         # Check if strategy needs global distribution
-        if config.ACTIVE_LEARNING_STRATEGY in ["PseudoConfidence", "PseudoEntropy", "PseudoEntropyVariance"] and global_distribution is None:
-            raise ValueError("Error: PseudoConfidence strategy requires global class distribution, but none was computed. "
+        if config.ACTIVE_LEARNING_STRATEGY in ["PseudoEntropyVariance"] and global_distribution is None:
+            raise ValueError("Error: PseudoEntropyVariance strategy requires global class distribution, but none was computed. "
                             "Make sure there are labeled samples available on all clients.")
         
         # Variables to store the final model and optimizer states
@@ -836,8 +836,8 @@ def main():
                 )
                 
                 # Select samples using strategy manager
-                if config.ACTIVE_LEARNING_STRATEGY in ["PseudoConfidence", "PseudoEntropy", "PseudoEntropyVariance", "AdaptiveEntropy", "HybridEntropyKAFALClassDifferentiated", "AblationClassUncertainty"]:
-                    # Pass global distribution when using PseudoConfidence
+                if config.ACTIVE_LEARNING_STRATEGY in ["PseudoEntropyVariance", "AblationClassUncertainty"]:
+                    # Pass global distribution when using PseudoEntropyVariance
                     selected_samples, remaining_unlabeled = strategy_manager.select_samples(
                         models['clients'][c],
                         models['server'],

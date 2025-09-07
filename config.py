@@ -21,35 +21,12 @@ else:
     DATA_ROOT = 'data/cifar-10-batches-py'  # Default fallback
     NUM_CLASSES = 10
 
-# Model Architecture Options:
-# - "resnet8" (default)
-# - "mobilenet_v2"
-MODEL_ARCHITECTURE = "mobilenet_v2"  # Options are "resnet8" and "mobilenet_v"
+MODEL_ARCHITECTURE = "resnet8"  # Options are "resnet8" and "mobilenet_v"
 
-# Active Learning Strategy Options:
-# - "KAFAL"
-# - "Entropy"
-# - "BADGE"
-# - "Random"
-# - "Noise"
-# - "FEAL"
-# - "LOGO"
-# - "GlobalOptimal"
-# - "CoreSet"
-# - "CoreSetGlobalOptimal"
-# - "PseudoConfidence"
-# - "PseudoEntropy"
-# - "PseudoEntropyVariance"
-# - "AdaptiveEntropy"
-# - "HybridEntropyKAFAL"
-# - "HybridEntropyKAFALEntropyFirst"
-# - "HybridEntropyKAFALClassDifferentiated"
-# - "AblationClassUncertainty"
-
-ACTIVE_LEARNING_STRATEGY = "BADGE"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "GlobalOptimal", "CoreSet", "CoreSetGlobalOptimal", "PseudoConfidence", "PseudoEntropy", "PseudoEntropyVariance", "AdaptiveEntropy", "HybridEntropyKAFAL", "HybridEntropyKAFALEntropyFirst", "HybridEntropyKAFALClassDifferentiated", and "AblationClassUncertainty"
+ACTIVE_LEARNING_STRATEGY = "Entropy"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "PseudoEntropyVariance", and "AblationClassUncertainty"
 
 # random seed
-SEED = 4000044
+SEED = 44
 TRIAL_SEED_OFFSET = 2000000
 
 # dirichlet partition non-iid level
@@ -58,15 +35,13 @@ ALPHA = 0.1
 # setting
 BUDGET  = 2500
 BASE = 5000
-EPOCH=5
-COMMUNICATION=100
-CYCLES=7
+EPOCH=1
+COMMUNICATION=3
+CYCLES=2
 RATIO=1.0
-CLIENTS=10
+CLIENTS=5
 TRIALS=1
 LOCAL_MODEL_UPDATE = "Vanilla" # Options are "Vanilla", "SimpleContrastive", "DebiasedContrastive", and "KFCU"  
-# This is now set at the top of the file
-# DATASET = "CIFAR10" # Options are "CIFAR10" and "SVHN"
 
 # Simple Contrastive Loss settings
 CONTRASTIVE_TEMPERATURE = 0.5

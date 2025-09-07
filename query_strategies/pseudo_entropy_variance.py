@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from data.sampler import SubsetSequentialSampler
-import config  # Import config to access NUM_CLASSES
+import config 
 import numpy as np
 import random
 
@@ -25,7 +25,6 @@ class PseudoClassBalancedVarianceEntropySampler:
             
         self.debug = True  # Enable detailed debugging
         
-        # We'll estimate the global class distribution from labeled data in each cycle
         self.global_class_distribution = None
         print(f"[PseudoEntropy] Using device: {self.device}")
         
@@ -90,9 +89,9 @@ class PseudoClassBalancedVarianceEntropySampler:
             raise ValueError("[PseudoEntropy] Error: No labeled samples available for distribution estimation")
         
         # Print the estimated distribution
-        print("[PseudoEntropy] Estimated global class distribution from labeled data:")
-        for cls in range(config.NUM_CLASSES):
-            print(f"  Class {cls}: {global_distribution[cls]:.4f} ({global_counts[cls]} samples)")
+        #print("[PseudoEntropy] Estimated global class distribution from labeled data:")
+        #for cls in range(config.NUM_CLASSES):
+         #   print(f"  Class {cls}: {global_distribution[cls]:.4f} ({global_counts[cls]} samples)")
         
         return global_distribution
 
@@ -126,7 +125,6 @@ class PseudoClassBalancedVarianceEntropySampler:
         for cls in available_classes:
             available_class_counts[cls] = current_distribution.get(cls, 0) * labeled_set_size
         
-        # Calculate representation ratios for available classes
         # This measures how well each class is represented compared to its target
         representation_ratios = {}
         missing_classes = []
@@ -153,20 +151,19 @@ class PseudoClassBalancedVarianceEntropySampler:
         # First approach: Prioritize missing classes
         if have_missing_classes and len(missing_classes) <= num_samples:
             # Assign at least one sample to each missing class
-            initial_allocation = min(5, num_samples // len(missing_classes))  # More aggressive initial allocation
+            initial_allocation = min(5, num_samples // len(missing_classes))  
             for cls in missing_classes:
                 target_counts[cls] = initial_allocation
             remaining = num_samples - sum(target_counts.values())
             
             # Distribute remaining samples to all available classes inversely proportional to representation
             if remaining > 0:
-                # Prepare for inverse-proportional allocation
                 total_inverse_ratio = 0
                 inverse_ratios = {}
                 
                 for cls in available_classes:
                     ratio = representation_ratios.get(cls, 0)
-                    inverse = 1.0 / (ratio + 0.01) if ratio > 0 else 100  # Avoid division by zero
+                    inverse = 1.0 / (ratio + 0.01) if ratio > 0 else 100  
                     inverse_ratios[cls] = inverse
                     total_inverse_ratio += inverse
                 
@@ -284,7 +281,6 @@ class PseudoClassBalancedVarianceEntropySampler:
             # Force exact budget usage
             diff = num_samples - final_count
             if diff > 0:
-                # Need to add more samples
                 sorted_classes = sorted(available_classes, 
                                          key=lambda cls: representation_ratios.get(cls, float('inf')))
                 for cls in sorted_classes:
@@ -293,7 +289,6 @@ class PseudoClassBalancedVarianceEntropySampler:
                     target_counts[cls] = target_counts.get(cls, 0) + 1
                     diff -= 1
             else:
-                # Need to remove some samples
                 sorted_classes = sorted(available_classes, 
                                          key=lambda cls: -representation_ratios.get(cls, float('inf')))
                 for cls in sorted_classes:
@@ -324,7 +319,7 @@ class PseudoClassBalancedVarianceEntropySampler:
         """
         print(f"[PseudoEntropy] Assigning pseudo-labels to unlabeled data using models")
         
-        # Track which classes have low std_dev (< 15)
+        # Track which classes have low std_dev (< 12)
         low_variance_classes = set()
         if class_std_devs is not None:
             for cls, std_dev in class_std_devs.items():
@@ -406,11 +401,11 @@ class PseudoClassBalancedVarianceEntropySampler:
         
         # Count pseudo-labels by class
         pseudo_counts = {}
-        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
+        for cls in range(config.NUM_CLASSES):  
             pseudo_counts[cls] = np.sum(pseudo_labels == cls)
         
         print(f"[PseudoEntropy] Pseudo-label distribution:")
-        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
+        for cls in range(config.NUM_CLASSES):  
             count = pseudo_counts[cls]
             percentage = count / len(pseudo_labels) * 100 if len(pseudo_labels) > 0 else 0
             avg_entropy = np.mean(entropy_scores[pseudo_labels == cls]) if count > 0 else 0
@@ -562,7 +557,7 @@ class PseudoClassBalancedVarianceEntropySampler:
             class_std_devs=class_std_devs  # Pass class standard deviations
         )
         
-        """
+        
         # Step 4: No filtering by confidence threshold - using all samples
         print(f"[PseudoEntropy] Using all {len(indices)} samples for selection")
         
@@ -677,20 +672,20 @@ class PseudoClassBalancedVarianceEntropySampler:
                 selected_samples.extend(additional_indices)
                 
                 print(f"[PseudoEntropy] Selected {additional} last-resort samples based on entropy")
-        """
+        
 
-            # ADD THIS FOR THE PURE ENTROPY-BASED SELECTION
-        print(f"[PseudoEntropy] ABLATION: Selecting top {num_samples} samples with highest entropy (ignoring class balance)")
+        # ONLY FOR ABLATION: ADD THIS FOR THE PURE ENTROPY-BASED SELECTION
+        #print(f"[PseudoEntropy] ABLATION: Selecting top {num_samples} samples with highest entropy (ignoring class balance)")
         
         # Create a list of (index, entropy) tuples
-        samples_with_entropy = list(zip(indices, entropy_scores))
+        #samples_with_entropy = list(zip(indices, entropy_scores))
         
         # Sort by entropy (highest first)
-        samples_with_entropy.sort(key=lambda x: x[1], reverse=True)
+        #samples_with_entropy.sort(key=lambda x: x[1], reverse=True)
         
         # Select top samples by entropy
-        num_to_select = min(num_samples, len(samples_with_entropy))
-        selected_samples = [sample[0] for sample in samples_with_entropy[:num_to_select]]
+        #num_to_select = min(num_samples, len(samples_with_entropy))
+        #selected_samples = [sample[0] for sample in samples_with_entropy[:num_to_select]]
 
         # END ABLATION
 
@@ -711,25 +706,24 @@ class PseudoClassBalancedVarianceEntropySampler:
                     found = True
                     break
             if not found:
-                selected_pseudo_classes.append(-1)  # Unknown class if not found
+                selected_pseudo_classes.append(-1) 
         
         final_class_counts = {}
-        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
+        for cls in range(config.NUM_CLASSES):  
             final_class_counts[cls] = sum(1 for label in selected_pseudo_classes if label == cls)
         
         print(f"\n[PseudoEntropy] Final selection pseudo-class distribution:")
-        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
+        for cls in range(config.NUM_CLASSES):  
             count = final_class_counts.get(cls, 0)
             percentage = count / len(selected_samples) * 100 if len(selected_samples) > 0 else 0
             #target = target_counts.get(cls, 0)
-            #print(f"  Class {cls}: {count} samples ({percentage:.1f}%) [Target: {target}]")
         
         print(f"[PseudoEntropy] Total selected: {len(selected_samples)} out of budget {num_samples}")
         
         # Calculate the new distribution after this selection
         future_distribution = {}
         future_size = total_labeled + len(selected_samples)
-        for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
+        for cls in range(config.NUM_CLASSES):  
             # Add newly selected samples to current distribution
             future_distribution[cls] = (labeled_pseudo_counts.get(cls, 0) + final_class_counts.get(cls, 0)) / future_size
         
