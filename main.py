@@ -3,10 +3,7 @@ Main entry point for federated active learning experiments.
 Implements federated learning with various active learning sampling strategies.
 """
 
-import os
-import random
 import argparse
-import json
 import numpy as np
 import copy
 import torch
@@ -15,14 +12,12 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data.sampler import SubsetRandomSampler
-#import matplotlib.pyplot as plt
 
 # Import models
 import models.preact_resnet as resnet
 import models.preact_resnet_mnist as resnet_mnist
 import models.mobilenet_v2 as mobilenet
 import models.mobilenet_v2_mnist as mobilenet_mnist
-
 
 # Import data utilities
 from data.dirichlet_partitioner import dirichlet_balanced_partition
@@ -32,7 +27,7 @@ from data.sampler import SubsetSequentialSampler
 from training.trainer import FederatedTrainer
 from training.evaluation import evaluate_model, evaluate_per_class_accuracy
 from training.utils import (
-    set_all_seeds, get_seed_worker, log_config, get_device, create_results_dir
+    set_all_seeds, get_seed_worker, log_config, get_device
 )
 
 # Import active learning strategies
@@ -43,7 +38,6 @@ from analysis.logger_strategy import FederatedALLogger
 
 # Import configuration
 import config
-
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -56,13 +50,9 @@ def parse_arguments():
     parser.add_argument('--budget', type=int, help='Active learning budget per cycle')
     parser.add_argument('--base', type=int, help='Initial labeled set size')
     parser.add_argument('--seed', type=int, help='Random seed')
-    parser.add_argument('--max-rounds', type=int, help='Maximum communication rounds per cycle')
-    parser.add_argument('--check-convergence', action='store_true', help='Monitor convergence before AL starts')
     parser.add_argument('--dataset', type=str, choices=['CIFAR10', 'SVHN', 'CIFAR100', 'MNIST'], help='Dataset to use')
     parser.add_argument('--model', type=str, choices=['resnet8', 'mobilenet_v2'], help='Model architecture to use')
-    
     return parser.parse_args()
-
 
 def load_datasets():
     """Load and prepare datasets (CIFAR10, SVHN, CIFAR100, or MNIST)."""
@@ -150,10 +140,8 @@ def load_datasets():
         select_dataset = MNIST(dataset_dir, train=True, download=True, transform=test_transform)
         
     else:
-        raise ValueError(f"Unsupported dataset: {dataset_name}")
-        
+        raise ValueError(f"Unsupported dataset: {dataset_name}")        
     return train_dataset, test_dataset, select_dataset
-
 
 def create_test_loader(dataset, trial_seed, batch_size=config.BATCH):
     """Create DataLoader for test data."""
@@ -167,36 +155,8 @@ def create_test_loader(dataset, trial_seed, batch_size=config.BATCH):
         worker_init_fn=test_worker_init_fn, 
         generator=test_generator,
         pin_memory=True
-    )
-    
+    ) 
     return test_loader
-
-def create_val_loader(dataset, trial_seed, indices=None, batch_size=config.BATCH):
-    """Create DataLoader for validation data."""
-    val_generator = torch.Generator()
-    val_generator.manual_seed(trial_seed + 10000)
-    val_worker_init_fn = get_seed_worker(trial_seed + 60000)
-    
-    if indices is not None:
-        sampler = SubsetRandomSampler(indices)
-        val_loader = DataLoader(
-            dataset, 
-            batch_size=batch_size,
-            sampler=sampler,
-            worker_init_fn=val_worker_init_fn, 
-            generator=val_generator,
-            pin_memory=True
-        )
-    else:
-        val_loader = DataLoader(
-            dataset, 
-            batch_size=batch_size,
-            worker_init_fn=val_worker_init_fn, 
-            generator=val_generator,
-            pin_memory=True
-        )
-    
-    return val_loader
 
 def main():
     """Main function to run federated active learning experiments."""
@@ -258,28 +218,12 @@ def main():
         config.MODEL_ARCHITECTURE = args.model
         print(f"Using model architecture: {config.MODEL_ARCHITECTURE}")
     
-    # Early stopping settings
-    max_rounds = args.max_rounds if args.max_rounds else config.COMMUNICATION
-    check_convergence = args.check_convergence
-    
-    if check_convergence:
-        print(f"Convergence monitoring enabled")
-    if max_rounds != config.COMMUNICATION:
-        print(f"Setting maximum communication rounds to: {max_rounds}")
-    
     # Log configuration
     log_config(config)
     
     # Determine device
     device = get_device()
     print(f"Using device: {device}")
-    
-    # Create results directory
-    results_dir = create_results_dir("results")
-    
-    # Create visualization directory
-    viz_dir = os.path.join(results_dir, "visualizations")
-    os.makedirs(viz_dir, exist_ok=True)
     
     # Load datasets
     cifar10_train, cifar10_test, cifar10_select = load_datasets()
@@ -327,8 +271,7 @@ def main():
         num_classes = config.NUM_CLASSES
         
         print('Query Strategy:', config.ACTIVE_LEARNING_STRATEGY)
-        
-        # Initialize strategy parameters - moved earlier so it's available for resuming
+    
         strategy_params = {
             'strategy_name': config.ACTIVE_LEARNING_STRATEGY,
             'loss_weight_list': [],  # Will be populated during initialization or resume
@@ -465,21 +408,11 @@ def main():
         # Create test loader
         test_loader = create_test_loader(cifar10_test, trial_seed)
         
-        # Create validation loader for convergence monitoring
-        # Using 20% of test set as validation
-        test_indices = list(range(len(cifar10_test)))
-        test_rng = np.random.RandomState(trial_seed + 500)
-        test_rng.shuffle(test_indices)
-        val_size = int(0.2 * len(test_indices))
-        val_indices = test_indices[:val_size]
-        val_loader = create_val_loader(cifar10_test, trial_seed, val_indices)
-        
         # Create dataloaders dictionary
         dataloaders = {
             'train-private': private_train_loaders,
             'unlab-private': private_unlab_loaders,
-            'test': test_loader,
-            'val': val_loader
+            'test': test_loader
         }
         
         # Initialize federated trainer
@@ -548,45 +481,9 @@ def main():
             optimizers = {'clients': optim_clients, 'server': optim_server}
             schedulers = {'clients': sched_clients, 'server': sched_server}
             
-            # Train with convergence monitoring if requested
-            if cycle == 0 and check_convergence:
-                print("\n===== Monitoring model convergence before active learning =====\n")
-                # Run with convergence monitoring for first cycle
-                train_stats = trainer.train(
-                    models, criterion, optimizers, schedulers, dataloaders, config.EPOCH, trial_seed,
-                    val_loader=dataloaders['val'], max_rounds=max_rounds
-                )
-                
-                # Plot convergence
-                if train_stats['rounds_completed'] > 0:
-                    conv_plot_path = os.path.join(viz_dir, f"convergence_trial_{trial+1}_cycle_{cycle+1}.png")
-                    plot_convergence(
-                        train_stats['train_losses'],
-                        train_stats['val_accuracies'],
-                        list(range(1, train_stats['rounds_completed'] + 1)),
-                        conv_plot_path,
-                        title=f"Model Convergence - Trial {trial+1} Cycle {cycle+1}"
-                    )
-                    
-                    # Print convergence summary
-                    print("\n===== Convergence Summary =====")
-                    print(f"Rounds completed: {train_stats['rounds_completed']}/{max_rounds}")
-                    print(f"Best validation accuracy: {train_stats['best_val_accuracy']:.2f}%")
-                    
-                    # Check if convergence appears to be reached
-                    if len(train_stats['val_accuracies']) > 2:
-                        last_3_accs = train_stats['val_accuracies'][-3:]
-                        acc_diff = max(last_3_accs) - min(last_3_accs)
-                        if acc_diff < 0.5:  # Less than 0.5% change in last 3 rounds
-                            print(f"Convergence appears stable (accuracy change < 0.5% in last 3 rounds)")
-                        else:
-                            print(f"Convergence may not be stable yet (accuracy change of {acc_diff:.2f}% in last 3 rounds)")
-                    print("=============================\n")
-            else:
-                # Regular training for subsequent cycles
-                train_stats = trainer.train(
-                    models, criterion, optimizers, schedulers, dataloaders, config.EPOCH, trial_seed
-                )
+            trainer.train(
+                models, criterion, optimizers, schedulers, dataloaders, config.EPOCH, trial_seed
+            )
             
             # Update class distribution statistics after selection
             print("\n===== Updating Class Distribution Analysis =====\n")
@@ -731,39 +628,12 @@ def main():
             data_num = np.array(data_num)
             trainer.set_loss_weights(loss_weight_list)
             trainer.set_data_num(data_num)
-            
             # Record accuracy
             accuracies[trial].append(acc_server)
-            
-            
             # Save logs
             logger.save_data()
         
         print('Accuracies for trial {}:'.format(trial), accuracies[trial])
-            
-        if config.ACTIVE_LEARNING_STRATEGY == "GlobalOptimal":
-            print("\n========== GLOBAL OPTIMAL STRATEGY SUMMARY ==========")
-            print(f"Trial {trial+1}/{config.TRIALS}")
-            
-            # Calculate standard deviation and coefficient of variation of dataset sizes
-            final_sizes = np.array([len(labeled_set_list[c]) for c in range(config.CLIENTS)])
-            mean_size = np.mean(final_sizes)
-            std_size = np.std(final_sizes)
-            cv = std_size / mean_size * 100  # Coefficient of variation as percentage
-            
-            print(f"Mean labeled samples per client: {mean_size:.2f}")
-            print(f"Standard deviation: {std_size:.2f}")
-            print(f"Coefficient of variation: {cv:.2f}%")
-            
-            # Show min and max
-            min_idx = np.argmin(final_sizes)
-            max_idx = np.argmax(final_sizes)
-            print(f"Client with min samples: Client {min_idx} ({final_sizes[min_idx]} samples)")
-            print(f"Client with max samples: Client {max_idx} ({final_sizes[max_idx]} samples)")
-            print(f"Imbalance ratio (max/min): {final_sizes[max_idx]/final_sizes[min_idx]:.2f}x")
-            
-            print("=======================================================\n")
-        
     
     # Print overall results
     print('Accuracies by trial:')
@@ -784,6 +654,5 @@ def main():
     else:
         print("No accuracy data to calculate mean")
     
-
 if __name__ == '__main__':
     main()

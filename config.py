@@ -5,7 +5,7 @@
 DATASET = "CIFAR10"  # Options are "CIFAR10", "SVHN", "CIFAR100", and "MNIST"
 
 # directory paths for datasets and number of classes
-if DATASET == "MNIST":
+if DATASET == "CIFAR10":
     DATA_ROOT = 'data/cifar-10-batches-py'
     NUM_CLASSES = 10
 elif DATASET == "SVHN":
@@ -21,9 +21,9 @@ else:
     DATA_ROOT = 'data/cifar-10-batches-py'  # Default fallback
     NUM_CLASSES = 10
 
-MODEL_ARCHITECTURE = "resnet8"  # Options are "resnet8" and "mobilenet_v"
+MODEL_ARCHITECTURE = "resnet8"  # Options are "resnet8" and "mobilenet_v2"
 
-ACTIVE_LEARNING_STRATEGY = "PseudoEntropyVariance"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "PseudoEntropyVariance", "AblationClassUncertainty"
+ACTIVE_LEARNING_STRATEGY = "FEAL"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "PseudoEntropyVariance", "AblationClassUncertainty"
 
 # random seed
 SEED = 44
