@@ -16,14 +16,13 @@ class AHFALSampler:
         Args:
             device (str): Device to run calculations on (e.g., 'cuda' or 'cpu').
         """
-        # Check if CUDA is available, fallback to CPU if not
         if device == "cuda" and not torch.cuda.is_available():
             print("[AHFAL] CUDA not available, falling back to CPU")
             self.device = "cpu"
         else:
             self.device = device
             
-        self.debug = True  # Enable detailed debugging
+        self.debug = False
         
         self.global_class_distribution = None
         print(f"[AHFAL] Using device: {self.device}")
@@ -87,11 +86,6 @@ class AHFALSampler:
         else:
             # Return error if no labeled samples are available
             raise ValueError("[AHFAL] Error: No labeled samples available for distribution estimation")
-        
-        # Print the estimated distribution
-        #print("[AHFAL] Estimated global class distribution from labeled data:")
-        #for cls in range(config.NUM_CLASSES):
-         #   print(f"  Class {cls}: {global_distribution[cls]:.4f} ({global_counts[cls]} samples)")
         
         return global_distribution
 
