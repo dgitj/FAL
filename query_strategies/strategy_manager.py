@@ -6,7 +6,7 @@ from query_strategies.noise_stability import NoiseStabilitySampler
 from query_strategies.feal import FEALSampler
 from query_strategies.logo import LoGoSampler
 from query_strategies.coreset import CoreSetSampler
-from query_strategies.pseudo_entropy_variance import PseudoClassBalancedVarianceEntropySampler
+from query_strategies.ahfal import AHFALSampler
 from query_strategies.ablation_class_uncertainty import AblationClassUncertaintySampler
 
 from config import ACTIVE_LEARNING_STRATEGY
@@ -89,9 +89,9 @@ class StrategyManager:
         elif strategy_name == "CoreSet":
             return CoreSetSampler(self.device)
             
-        elif strategy_name == "PseudoEntropyVariance":
-            print(f"[StrategyManager] Initializing PseudoEntropyVariance strategy (with class variance awareness)")
-            return PseudoClassBalancedVarianceEntropySampler(self.device)
+        elif strategy_name == "AHFAL":
+            print(f"[StrategyManager] Initializing AHFAL strategy (with class variance awareness)")
+            return AHFALSampler(self.device)
             
         elif strategy_name == "AblationClassUncertainty":
             print(f"[StrategyManager] Initializing Ablation: Class-Specific Uncertainty Only")
@@ -153,7 +153,7 @@ class StrategyManager:
                 labeled_set = self.labeled_set_list[c]
             return self.sampler.select_samples(model, model_server, unlabeled_loader, c, unlabeled_set, num_samples, labeled_set=labeled_set, seed=seed)
             
-        elif self.strategy_name == "PseudoEntropyVariance":
+        elif self.strategy_name == "AHFAL":
             # This strategy uses both global distribution and class variance stats
             if labeled_set is None and self.labeled_set_list is not None and c < len(self.labeled_set_list):
                 labeled_set = self.labeled_set_list[c]

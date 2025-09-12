@@ -6,7 +6,7 @@ from .noise_stability import NoiseStabilitySampler
 from .feal import FEALSampler
 from .logo import LoGoSampler
 from .coreset import CoreSetSampler
-from .pseudo_entropy_variance import PseudoClassBalancedVarianceEntropySampler
+from .ahfal import AHFALSampler
 from .ablation_class_uncertainty import AblationClassUncertaintySampler
 from .strategy_manager import StrategyManager
 
@@ -22,5 +22,5 @@ __all__ = [
     "LoGoSampler",
     "AblationClassUncertaintySampler",
     "CoreSetSampler",
-    "PseudoClassBalancedVarianceEntropySampler",
+    "AHFALSampler",
 ]

@@ -278,10 +278,10 @@ def main():
             'device': device
         }
         
-        # Add confidence threshold for PseudoEntropy if specified
-        if config.ACTIVE_LEARNING_STRATEGY in ["PseudoEntropyVariance"] and args.confidence is not None:
+        # Add confidence threshold for AHFAL if specified
+        if config.ACTIVE_LEARNING_STRATEGY in ["AHFAL"] and args.confidence is not None:
             strategy_params['confidence_threshold'] = args.confidence
-            print(f"Setting PseudoEntropy confidence threshold to: {args.confidence}")
+            print(f"Setting AHFAL confidence threshold to: {args.confidence}")
         
         # Prepare client data
         # Initialize model based on architecture setting
@@ -401,7 +401,7 @@ def main():
         strategy_manager = StrategyManager(**strategy_params)
         
         # If using strategies that need labeled set list or total clients
-        if config.ACTIVE_LEARNING_STRATEGY in ["CoreSet", "PseudoEntropyVariance"]:
+        if config.ACTIVE_LEARNING_STRATEGY in ["CoreSet", "AHFAL"]:
             strategy_manager.set_total_clients(config.CLIENTS)
             strategy_manager.set_labeled_set_list(labeled_set_list)
 
@@ -432,8 +432,8 @@ def main():
         global_distribution = trainer.aggregate_class_distributions()
         
         # Check if strategy needs global distribution
-        if config.ACTIVE_LEARNING_STRATEGY in ["PseudoEntropyVariance"] and global_distribution is None:
-            raise ValueError("Error: PseudoEntropyVariance strategy requires global class distribution, but none was computed. "
+        if config.ACTIVE_LEARNING_STRATEGY in ["AHFAL"] and global_distribution is None:
+            raise ValueError("Error: AHFAL strategy requires global class distribution, but none was computed. "
                             "Make sure there are labeled samples available on all clients.")
         
         
@@ -534,8 +534,8 @@ def main():
                 )
                 
                 # Select samples using strategy manager
-                if config.ACTIVE_LEARNING_STRATEGY in ["PseudoEntropyVariance", "AblationClassUncertainty"]:
-                    # Pass global distribution when using PseudoEntropyVariance
+                if config.ACTIVE_LEARNING_STRATEGY in ["AHFAL", "AblationClassUncertainty"]:
+                    # Pass global distribution when using AHFAL
                     selected_samples, remaining_unlabeled = strategy_manager.select_samples(
                         models['clients'][c],
                         models['server'],

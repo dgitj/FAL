@@ -6,10 +6,10 @@ import config
 import numpy as np
 import random
 
-class PseudoClassBalancedVarianceEntropySampler:
+class AHFALSampler:
     def __init__(self, device="cuda"):
         """
-        Initializes the Pseudo-Class-Balanced Entropy sampler.
+        Initializes the AHFAL sampler.
         This sampler uses the local model for pseudo-labeling data and balancing class distribution,
         selecting samples with the highest entropy (uncertainty) per pseudo-class.
 
@@ -18,7 +18,7 @@ class PseudoClassBalancedVarianceEntropySampler:
         """
         # Check if CUDA is available, fallback to CPU if not
         if device == "cuda" and not torch.cuda.is_available():
-            print("[PseudoEntropy] CUDA not available, falling back to CPU")
+            print("[AHFAL] CUDA not available, falling back to CPU")
             self.device = "cpu"
         else:
             self.device = device
@@ -26,7 +26,7 @@ class PseudoClassBalancedVarianceEntropySampler:
         self.debug = True  # Enable detailed debugging
         
         self.global_class_distribution = None
-        print(f"[PseudoEntropy] Using device: {self.device}")
+        print(f"[AHFAL] Using device: {self.device}")
         
         # For tracking client progress across cycles
         self.client_cycles = {}
@@ -50,7 +50,7 @@ class PseudoClassBalancedVarianceEntropySampler:
             _, label = dataset[idx]
             class_counts[label] += 1
         
-        print("[PseudoEntropy] Local class distribution from true labels:")
+        print("[AHFAL] Local class distribution from true labels:")
         for cls in range(config.NUM_CLASSES):
             percentage = (class_counts.get(cls, 0) / len(labeled_set) * 100) if len(labeled_set) > 0 else 0
             print(f"  Class {cls}: {class_counts.get(cls, 0)} samples ({percentage:.1f}%)")
@@ -86,10 +86,10 @@ class PseudoClassBalancedVarianceEntropySampler:
                                 for cls, count in global_counts.items()}
         else:
             # Return error if no labeled samples are available
-            raise ValueError("[PseudoEntropy] Error: No labeled samples available for distribution estimation")
+            raise ValueError("[AHFAL] Error: No labeled samples available for distribution estimation")
         
         # Print the estimated distribution
-        #print("[PseudoEntropy] Estimated global class distribution from labeled data:")
+        #print("[AHFAL] Estimated global class distribution from labeled data:")
         #for cls in range(config.NUM_CLASSES):
          #   print(f"  Class {cls}: {global_distribution[cls]:.4f} ({global_counts[cls]} samples)")
         
@@ -113,12 +113,12 @@ class PseudoClassBalancedVarianceEntropySampler:
         
         # Safety check - if global_class_distribution is not set
         if self.global_class_distribution is None:
-            raise ValueError("[PseudoEntropy] Error: Global class distribution not available")
+            raise ValueError("[AHFAL] Error: Global class distribution not available")
         
         if self.debug:
-            print(f"[PseudoEntropy] Planning to select {num_samples} samples")
-            print(f"[PseudoEntropy] Future labeled set size will be: {future_size}")
-            print(f"[PseudoEntropy] Available classes in unlabeled pool: {sorted(list(available_classes))}")  
+            print(f"[AHFAL] Planning to select {num_samples} samples")
+            print(f"[AHFAL] Future labeled set size will be: {future_size}")
+            print(f"[AHFAL] Available classes in unlabeled pool: {sorted(list(available_classes))}")  
         
         # Check if all available classes have the same representation
         available_class_counts = {}
@@ -230,7 +230,7 @@ class PseudoClassBalancedVarianceEntropySampler:
         remaining = num_samples - sum(target_counts.values())
         if remaining > 0:
             if self.debug:
-                print(f"[PseudoEntropy] Distributing {remaining} remaining samples to maximize balance")
+                print(f"[AHFAL] Distributing {remaining} remaining samples to maximize balance")
             
             # Sort by current representation after initial allocation
             # We need to recalculate the projected ratios after our initial allocation
@@ -276,7 +276,7 @@ class PseudoClassBalancedVarianceEntropySampler:
         # Final verification that we're using exactly the budget
         final_count = sum(target_counts.values())
         if final_count != num_samples:
-            print(f"[PseudoEntropy] WARNING: Target count {final_count} doesn't match budget {num_samples}")
+            print(f"[AHFAL] WARNING: Target count {final_count} doesn't match budget {num_samples}")
             
             # Force exact budget usage
             diff = num_samples - final_count
@@ -298,8 +298,8 @@ class PseudoClassBalancedVarianceEntropySampler:
                     diff += 1
         
         if self.debug:
-            print(f"[PseudoEntropy] Target counts per class: {target_counts}")
-            print(f"[PseudoEntropy] Total samples to select: {sum(target_counts.values())}")
+            print(f"[AHFAL] Target counts per class: {target_counts}")
+            print(f"[AHFAL] Total samples to select: {sum(target_counts.values())}")
         
         return target_counts
 
@@ -317,7 +317,7 @@ class PseudoClassBalancedVarianceEntropySampler:
         Returns:
             tuple: (indices, pseudo_labels, confidence_scores, entropy_scores)
         """
-        print(f"[PseudoEntropy] Assigning pseudo-labels to unlabeled data using models")
+        print(f"[AHFAL] Assigning pseudo-labels to unlabeled data using models")
         
         # Track which classes have low std_dev (< 12)
         low_variance_classes = set()
@@ -325,7 +325,7 @@ class PseudoClassBalancedVarianceEntropySampler:
             for cls, std_dev in class_std_devs.items():
                 if std_dev < 12.0:  # Using the threshold
                     low_variance_classes.add(cls)
-                    print(f"[PseudoEntropy] Class {cls} has low variance (std_dev = {std_dev:.5f}) - using combined models")
+                    print(f"[AHFAL] Class {cls} has low variance (std_dev = {std_dev:.5f}) - using combined models")
         
         # Collect predictions
         model.eval()
@@ -404,7 +404,7 @@ class PseudoClassBalancedVarianceEntropySampler:
         for cls in range(config.NUM_CLASSES):  
             pseudo_counts[cls] = np.sum(pseudo_labels == cls)
         
-        print(f"[PseudoEntropy] Pseudo-label distribution:")
+        print(f"[AHFAL] Pseudo-label distribution:")
         for cls in range(config.NUM_CLASSES):  
             count = pseudo_counts[cls]
             percentage = count / len(pseudo_labels) * 100 if len(pseudo_labels) > 0 else 0
@@ -444,18 +444,18 @@ class PseudoClassBalancedVarianceEntropySampler:
                 torch.backends.cudnn.deterministic = True
                 torch.backends.cudnn.benchmark = False
         if self.debug:
-            print(f"\n[PseudoEntropy] Client {client_id}: Selecting {num_samples} samples")
-            print(f"[PseudoEntropy] Unlabeled pool size: {len(unlabeled_set)}")
+            print(f"\n[AHFAL] Client {client_id}: Selecting {num_samples} samples")
+            print(f"[AHFAL] Unlabeled pool size: {len(unlabeled_set)}")
         
         # Get dataset for accessing labels
         dataset = unlabeled_loader.dataset
 
         # Use the provided labeled_set which should always be passed
         if labeled_set is not None:
-            print(f"[PseudoEntropy] Using provided labeled set with {len(labeled_set)} samples")
+            print(f"[AHFAL] Using provided labeled set with {len(labeled_set)} samples")
         else:
             labeled_set = []
-            print(f"[PseudoEntropy] No labeled set provided, assuming empty labeled set")
+            print(f"[AHFAL] No labeled set provided, assuming empty labeled set")
 
         # Track current cycle for this client
         if not hasattr(self, 'client_cycles'):
@@ -471,7 +471,7 @@ class PseudoClassBalancedVarianceEntropySampler:
         
         # Print class variance stats across clients if provided
         if class_variance_stats is not None and isinstance(class_variance_stats, dict) and 'class_stats' in class_variance_stats:
-            print(f"\n[PseudoEntropy] Class std deviation across clients for cycle {self.client_cycles.get(client_id, 0)}:")
+            print(f"\n[AHFAL] Class std deviation across clients for cycle {self.client_cycles.get(client_id, 0)}:")
             class_stats = class_variance_stats['class_stats']
             
             # Print per-class standard deviation
@@ -483,25 +483,25 @@ class PseudoClassBalancedVarianceEntropySampler:
                 print(f"  Class {cls}: std_dev = {std_dev:.5f}")
         
         # Calculate local class distribution using true labels
-        print(f"[PseudoEntropy] Cycle {self.client_cycles.get(client_id, 0)} - Calculating local class distribution")
+        print(f"[AHFAL] Cycle {self.client_cycles.get(client_id, 0)} - Calculating local class distribution")
         local_distribution = self.calculate_local_class_distribution(labeled_set, dataset)
         
         # Use the global distribution provided by the trainer if available
         if global_class_distribution is not None:
             self.global_class_distribution = global_class_distribution
-            print("[PseudoEntropy] Using global class distribution from trainer")
+            print("[AHFAL] Using global class distribution from trainer")
             
             # Print the global distribution
-            print("[PseudoEntropy] Global class distribution:")
+            print("[AHFAL] Global class distribution:")
             for cls in range(config.NUM_CLASSES):
                 percentage = global_class_distribution.get(cls, 0) * 100
                 print(f"  Class {cls}: {percentage:.2f}%")
                 
             # Print global distribution as a dictionary for easier inspection
-            print(f"[PseudoEntropy] Global class distribution (dict format): {global_class_distribution}") 
+            print(f"[AHFAL] Global class distribution (dict format): {global_class_distribution}") 
         else:
             # If global distribution is not available, raise an error
-            raise ValueError("[PseudoEntropy] Error: Global class distribution not provided. Cannot proceed without global distribution.")
+            raise ValueError("[AHFAL] Error: Global class distribution not provided. Cannot proceed without global distribution.")
         
         # Step 2: Get labeled sample class distribution using pseudo-labels from the server model
         labeled_pseudo_counts = {i: 0 for i in range(config.NUM_CLASSES)}
@@ -530,7 +530,7 @@ class PseudoClassBalancedVarianceEntropySampler:
                         labeled_pseudo_counts[pred] += 1
             
             # Print the labeled set pseudo-class distribution
-            print(f"[PseudoEntropy] Labeled set pseudo-class distribution:")
+            print(f"[AHFAL] Labeled set pseudo-class distribution:")
             for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
                 percentage = (labeled_pseudo_counts.get(cls, 0) / total_labeled * 100) if total_labeled > 0 else 0
                 print(f"  Class {cls}: {labeled_pseudo_counts.get(cls, 0)} samples ({percentage:.1f}%)")
@@ -559,11 +559,11 @@ class PseudoClassBalancedVarianceEntropySampler:
         
         
         # Step 4: No filtering by confidence threshold - using all samples
-        print(f"[PseudoEntropy] Using all {len(indices)} samples for selection")
+        print(f"[AHFAL] Using all {len(indices)} samples for selection")
         
         # Get all available pseudo-classes in the unlabeled pool
         available_classes = set(pseudo_labels)
-        print(f"[PseudoEntropy] Available pseudo-classes in unlabeled pool: {sorted(list(available_classes))}")
+        print(f"[AHFAL] Available pseudo-classes in unlabeled pool: {sorted(list(available_classes))}")
         
         # Step 5: Calculate the target counts for each class
         target_counts = self.compute_target_counts(
@@ -582,13 +582,13 @@ class PseudoClassBalancedVarianceEntropySampler:
         
         # Count available samples by pseudo-class
         available_by_class = {cls: len(samples) for cls, samples in class_entropy_mapping.items() if len(samples) > 0}
-        print(f"[PseudoEntropy] Available samples by pseudo-class: {available_by_class}")
+        print(f"[AHFAL] Available samples by pseudo-class: {available_by_class}")
         
         # Step 7: Check if target counts are achievable
         for cls, count in target_counts.items():
             available = available_by_class.get(cls, 0)
             if count > available:
-                print(f"[PseudoEntropy] Warning: Target count {count} for pseudo-class {cls} exceeds available {available}")
+                print(f"[AHFAL] Warning: Target count {count} for pseudo-class {cls} exceeds available {available}")
                 # Adjust target count to available
                 target_counts[cls] = available
         
@@ -624,7 +624,7 @@ class PseudoClassBalancedVarianceEntropySampler:
                     if remaining <= 0:
                         break
                 
-                print(f"[PseudoEntropy] Redistributed {num_samples - total_adjusted} samples, new target counts: {target_counts}")
+                print(f"[AHFAL] Redistributed {num_samples - total_adjusted} samples, new target counts: {target_counts}")
         
         # Step 9: Select samples based on entropy within each pseudo-class
         selected_samples = []
@@ -636,7 +636,7 @@ class PseudoClassBalancedVarianceEntropySampler:
         for cls in sorted_classes:
             if target_counts[cls] > 0:
                 if cls not in class_entropy_mapping or len(class_entropy_mapping[cls]) == 0:
-                    print(f"[PseudoEntropy] No unlabeled samples available for pseudo-class {cls}")
+                    print(f"[AHFAL] No unlabeled samples available for pseudo-class {cls}")
                     continue
                 
                 # Sort samples by entropy (highest first)
@@ -649,12 +649,12 @@ class PseudoClassBalancedVarianceEntropySampler:
                 selected_samples.extend(selected_indices)
                 
                 balanced_selections[cls] = num_to_select
-                print(f"[PseudoEntropy] Selected {num_to_select} samples from pseudo-class {cls}")
+                print(f"[AHFAL] Selected {num_to_select} samples from pseudo-class {cls}")
         
         # Step 10: Check if we need to handle unallocated budget
         remaining_to_select = num_samples - len(selected_samples)
         if remaining_to_select > 0:
-            print(f"[PseudoEntropy] WARNING: Still need to select {remaining_to_select} samples")
+            print(f"[AHFAL] WARNING: Still need to select {remaining_to_select} samples")
             
             # As a last resort, just select any remaining samples by entropy
             remaining_indices = [idx for idx in unlabeled_set if idx not in selected_samples]
@@ -671,11 +671,11 @@ class PseudoClassBalancedVarianceEntropySampler:
                 additional_indices = [idx for idx, _ in sorted_remaining[:additional]]
                 selected_samples.extend(additional_indices)
                 
-                print(f"[PseudoEntropy] Selected {additional} last-resort samples based on entropy")
+                print(f"[AHFAL] Selected {additional} last-resort samples based on entropy")
         
 
         # ONLY FOR ABLATION: ADD THIS FOR THE PURE ENTROPY-BASED SELECTION
-        #print(f"[PseudoEntropy] ABLATION: Selecting top {num_samples} samples with highest entropy (ignoring class balance)")
+        #print(f"[AHFAL] ABLATION: Selecting top {num_samples} samples with highest entropy (ignoring class balance)")
         
         # Create a list of (index, entropy) tuples
         #samples_with_entropy = list(zip(indices, entropy_scores))
@@ -712,13 +712,13 @@ class PseudoClassBalancedVarianceEntropySampler:
         for cls in range(config.NUM_CLASSES):  
             final_class_counts[cls] = sum(1 for label in selected_pseudo_classes if label == cls)
         
-        print(f"\n[PseudoEntropy] Final selection pseudo-class distribution:")
+        print(f"\n[AHFAL] Final selection pseudo-class distribution:")
         for cls in range(config.NUM_CLASSES):  
             count = final_class_counts.get(cls, 0)
             percentage = count / len(selected_samples) * 100 if len(selected_samples) > 0 else 0
             #target = target_counts.get(cls, 0)
         
-        print(f"[PseudoEntropy] Total selected: {len(selected_samples)} out of budget {num_samples}")
+        print(f"[AHFAL] Total selected: {len(selected_samples)} out of budget {num_samples}")
         
         # Calculate the new distribution after this selection
         future_distribution = {}
@@ -729,13 +729,13 @@ class PseudoClassBalancedVarianceEntropySampler:
         
         # Calculate how close we got to the global distribution
         dist_error = sum(abs(future_distribution.get(cls, 0) - self.global_class_distribution.get(cls, 0)) for cls in range(config.NUM_CLASSES)) / 2
-        print(f"[PseudoEntropy] Distribution error after selection: {dist_error:.4f} (lower is better)")
+        print(f"[AHFAL] Distribution error after selection: {dist_error:.4f} (lower is better)")
         
         # Display improvement compared to initial distribution
         if total_labeled > 0:
             initial_distribution = {cls: count/total_labeled for cls, count in labeled_pseudo_counts.items()}
             initial_error = sum(abs(initial_distribution.get(cls, 0) - self.global_class_distribution.get(cls, 0)) for cls in range(config.NUM_CLASSES)) / 2
             improvement = initial_error - dist_error
-            print(f"[PseudoEntropy] Initial error: {initial_error:.4f}, Improvement: {improvement:.4f} ({improvement/initial_error*100:.1f}% better)")
+            print(f"[AHFAL] Initial error: {initial_error:.4f}, Improvement: {improvement:.4f} ({improvement/initial_error*100:.1f}% better)")
         
         return selected_samples, remaining_unlabeled
