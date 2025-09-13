@@ -23,7 +23,7 @@ else:
 
 MODEL_ARCHITECTURE = "resnet8"  # Options are "resnet8" and "mobilenet_v2"
 
-ACTIVE_LEARNING_STRATEGY = "CoreSet"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "AHFAL", "AblationClassUncertainty"
+ACTIVE_LEARNING_STRATEGY = "AHFAL"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "AHFAL", "AblationClassUncertainty"
 
 # random seed
 SEED = 44
@@ -51,3 +51,8 @@ WDECAY = 5e-4
 BATCH = 128
 MOMENTUM = 0.9
 BETA = [2,2]
+
+# Specialist Clustering Configuration
+ENABLE_SPECIALIST_CLUSTERING = True
+SPECIALIST_ROUNDS = 10
+MIN_CLUSTER_SIZE = 2

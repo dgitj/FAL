@@ -39,6 +39,16 @@ from analysis.logger_strategy import FederatedALLogger
 # Import configuration
 import config
 
+# Import specialist clustering (Phase 1)
+print(f"[DEBUG] ENABLE_SPECIALIST_CLUSTERING = {config.ENABLE_SPECIALIST_CLUSTERING}")
+if config.ENABLE_SPECIALIST_CLUSTERING:
+    print("[DEBUG] Importing specialist clustering modules...")
+    from training.specialist_detection import detect_specialists
+    from training.cluster_manager import form_clusters, validate_clusters
+    print("[DEBUG] Specialist clustering modules imported successfully")
+else:
+    print("[DEBUG] Specialist clustering is disabled in config")
+
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Federated Active Learning')
@@ -494,6 +504,86 @@ def main():
             
             # Recalculate variance statistics for next cycle
             variance_stats = trainer.analyze_class_distribution_variance()
+            
+            print(f"[DEBUG] About to check specialist clustering. ENABLE_SPECIALIST_CLUSTERING = {config.ENABLE_SPECIALIST_CLUSTERING}")
+            
+            # Phase 1: Specialist Detection and Clustering (if enabled)
+            if config.ENABLE_SPECIALIST_CLUSTERING:
+                print("[DEBUG] Entering specialist clustering section...")
+                print("\n" + "=" * 60)
+                print("===== SPECIALIST CLUSTERING ANALYSIS (CYCLE {})".format(cycle + 1))
+                print("=" * 60)
+                
+                # Prepare client distributions for specialist detection
+                client_distributions = []
+                print("\n[Main] Preparing client class distributions:")
+                for c in range(config.CLIENTS):
+                    # Get class distribution for this client's labeled set
+                    class_counts = {}
+                    for class_id in range(num_classes):
+                        class_counts[class_id] = 0
+                    
+                    # Count samples per class
+                    for idx in labeled_set_list[c]:
+                        label = id2lab[idx]
+                        class_counts[label] += 1
+                    
+                    # Convert to percentages
+                    total_samples = len(labeled_set_list[c])
+                    if total_samples > 0:
+                        class_percentages = {class_id: count / total_samples 
+                                           for class_id, count in class_counts.items()}
+                    else:
+                        class_percentages = {class_id: 0.0 for class_id in range(num_classes)}
+                    
+                    client_distributions.append(class_percentages)
+                    
+                    # Print client distribution summary
+                    top_classes = sorted(class_percentages.items(), key=lambda x: x[1], reverse=True)[:3]
+                    top_classes_str = ", ".join([f"Class {cls}: {pct:.2%}" for cls, pct in top_classes])
+                    print(f"  Client {c}: {total_samples} samples, top classes: {top_classes_str}")
+                
+                print(f"\n[Main] Global distribution: {', '.join([f'Class {k}: {v:.2%}' for k, v in global_distribution.items()])}")
+                
+                # Detect specialists
+                specialist_mapping = detect_specialists(
+                    client_distributions, 
+                    global_distribution, 
+                    num_classes,
+                    min_cluster_size=config.MIN_CLUSTER_SIZE
+                )
+                
+                # Form clusters
+                clusters = form_clusters(specialist_mapping, min_cluster_size=config.MIN_CLUSTER_SIZE)
+                
+                # Validate clusters
+                clusters_valid = validate_clusters(clusters, min_size=config.MIN_CLUSTER_SIZE)
+                
+                if clusters_valid:
+                    print(f"\n[Main] ✅ Successfully formed {len(clusters)} specialist clusters")
+                    # Log clustering information
+                    logger.log_specialist_clustering(cycle, specialist_mapping, clusters)
+                    
+                    # Print final summary for user
+                    print("\n" + "=" * 50)
+                    print("FINAL CLUSTER ASSIGNMENTS:")
+                    print("=" * 50)
+                    specialist_clusters = {k: v for k, v in clusters.items() if k != 'generalist'}
+                    if specialist_clusters:
+                        print("📊 SPECIALIST CLUSTERS:")
+                        for cluster_id, clients in specialist_clusters.items():
+                            print(f"   🎯 Class {cluster_id} Specialists: Clients {clients}")
+                    
+                    if 'generalist' in clusters:
+                        print(f"📊 GENERALIST CLUSTER: Clients {clusters['generalist']}")
+                    
+                    print("=" * 50)
+                    print("TODO: Phase 2 will use these clusters for 10/90 training split")
+                    print("=" * 50)
+                else:
+                    print("\n[Main] ❌ Clustering validation failed, falling back to standard AHFAL")
+                
+                print("=" * 60 + "\n")
             
             # Note: global_distribution remains fixed from initial calculation
             # to serve as a consistent target throughout training
