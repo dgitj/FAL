@@ -7,7 +7,6 @@ from query_strategies.feal import FEALSampler
 from query_strategies.logo import LoGoSampler
 from query_strategies.coreset import CoreSetSampler
 from query_strategies.ahfal import AHFALSampler
-from query_strategies.ablation_class_uncertainty import AblationClassUncertaintySampler
 
 from config import ACTIVE_LEARNING_STRATEGY
 
@@ -92,10 +91,6 @@ class StrategyManager:
         elif strategy_name == "AHFAL":
             print(f"[StrategyManager] Initializing AHFAL strategy (with class variance awareness)")
             return AHFALSampler(self.device)
-            
-        elif strategy_name == "AblationClassUncertainty":
-            print(f"[StrategyManager] Initializing Ablation: Class-Specific Uncertainty Only")
-            return AblationClassUncertaintySampler(self.device)
 
         else:
             raise ValueError(f"Invalid strategy name: {strategy_name}")
@@ -166,29 +161,4 @@ class StrategyManager:
                 class_variance_stats=class_variance_stats
             )
         
-        elif self.strategy_name in ["AblationClassUncertainty"]:
-        # These strategies need both models, client ID, and class variance stats
-            try:
-                if labeled_set is None and self.labeled_set_list is not None and c < len(self.labeled_set_list):
-                    labeled_set = self.labeled_set_list[c]
-                
-                # Get labeled set class information if available
-                labeled_set_classes = None
-                if hasattr(self, 'labeled_set_classes_list') and self.labeled_set_classes_list is not None \
-                    and c < len(self.labeled_set_classes_list):
-                    labeled_set_classes = self.labeled_set_classes_list[c]
-                    
-                # Pass all required parameters to class-differentiated strategy
-                return self.sampler.select_samples(
-                    model, model_server, unlabeled_loader, c, unlabeled_set, 
-                    num_samples, labeled_set=labeled_set, seed=seed,
-                    global_class_distribution=global_class_distribution,
-                    class_variance_stats=class_variance_stats,
-                    current_round=current_round,
-                    total_rounds=total_rounds,
-                    labeled_set_classes=labeled_set_classes
-                )
-            except ValueError as e:
-                print(f"ERROR in {self.strategy_name}: {str(e)}")
-                raise  # Re-raise the exception to be handled by the caller
                 

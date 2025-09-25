@@ -45,20 +45,6 @@ class FederatedALLogger:
     def log_class_accuracies(self, cycle, class_accuracies):
         self.class_accuracies[cycle] = {str(k): float(v) for k, v in class_accuracies.items()}
     
-    def log_specialist_clustering(self, cycle, specialist_mapping, clusters):
-        """Log specialist clustering information (Phase 1 only - just for analysis)"""
-        if not hasattr(self, 'clustering_info'):
-            self.clustering_info = {}
-        
-        self.clustering_info[cycle] = {
-            'specialist_mapping': specialist_mapping.copy(),
-            'clusters': {str(k): v for k, v in clusters.items()},
-            'num_clusters': len(clusters),
-            'cluster_sizes': {str(k): len(v) for k, v in clusters.items()}
-        }
-        
-        print(f"[Logger] Recorded clustering info for cycle {cycle}")
-    
     def save_data(self):
         # Convert numpy types to Python types
         def convert_for_json(obj):
@@ -90,10 +76,6 @@ class FederatedALLogger:
             'global_accuracy': convert_for_json(self.global_accuracy),
             'class_accuracies': convert_for_json(self.class_accuracies)
         }
-        
-        # Add clustering info if available
-        if hasattr(self, 'clustering_info'):
-            data['clustering_info'] = convert_for_json(self.clustering_info)
         
         # Save JSON file
         json_filename = f"{self.strategy_name}_c{self.num_clients}_trial{self.trial_id}.json"

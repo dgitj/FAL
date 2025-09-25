@@ -23,9 +23,7 @@ class AHFALSampler:
             self.device = device
             
         self.debug = False
-        
         self.global_class_distribution = None
-        print(f"[AHFAL] Using device: {self.device}")
         
         # For tracking client progress across cycles
         self.client_cycles = {}
@@ -52,8 +50,7 @@ class AHFALSampler:
         print("[AHFAL] Local class distribution from true labels:")
         for cls in range(config.NUM_CLASSES):
             percentage = (class_counts.get(cls, 0) / len(labeled_set) * 100) if len(labeled_set) > 0 else 0
-            print(f"  Class {cls}: {class_counts.get(cls, 0)} samples ({percentage:.1f}%)")
-            
+            #print(f"  Class {cls}: {class_counts.get(cls, 0)} samples ({percentage:.1f}%)")     
         return class_counts
 
     def aggregate_class_distributions(self, client_distributions):
@@ -227,7 +224,6 @@ class AHFALSampler:
                 print(f"[AHFAL] Distributing {remaining} remaining samples to maximize balance")
             
             # Sort by current representation after initial allocation
-            # We need to recalculate the projected ratios after our initial allocation
             projected_counts = {}
             projected_ratios = {}
             
@@ -311,7 +307,7 @@ class AHFALSampler:
         Returns:
             tuple: (indices, pseudo_labels, confidence_scores, entropy_scores)
         """
-        print(f"[AHFAL] Assigning pseudo-labels to unlabeled data using models")
+        #print(f"[AHFAL] Assigning pseudo-labels to unlabeled data using models")
         
         # Track which classes have low std_dev (< 12)
         low_variance_classes = set()
@@ -398,13 +394,13 @@ class AHFALSampler:
         for cls in range(config.NUM_CLASSES):  
             pseudo_counts[cls] = np.sum(pseudo_labels == cls)
         
-        print(f"[AHFAL] Pseudo-label distribution:")
+        #print(f"[AHFAL] Pseudo-label distribution:")
         for cls in range(config.NUM_CLASSES):  
             count = pseudo_counts[cls]
             percentage = count / len(pseudo_labels) * 100 if len(pseudo_labels) > 0 else 0
             avg_entropy = np.mean(entropy_scores[pseudo_labels == cls]) if count > 0 else 0
             is_low_var = "Low variance - combined models" if cls in low_variance_classes else "Normal"
-            print(f"  Class {cls}: {count} samples ({percentage:.1f}%), avg entropy: {avg_entropy:.3f}, {is_low_var}")
+            #print(f"  Class {cls}: {count} samples ({percentage:.1f}%), avg entropy: {avg_entropy:.3f}, {is_low_var}")
         
         return indices, pseudo_labels, confidence_scores, entropy_scores
 
@@ -427,7 +423,7 @@ class AHFALSampler:
         """
          # Comprehensive seed setting for reproducibility
         if seed is not None:
-            print(f"Entropy Strategy: Setting random seed: {seed}")
+            #print(f"Entropy Strategy: Setting random seed: {seed}")
             import random
             random.seed(seed)
             np.random.seed(seed)
@@ -465,7 +461,7 @@ class AHFALSampler:
         
         # Print class variance stats across clients if provided
         if class_variance_stats is not None and isinstance(class_variance_stats, dict) and 'class_stats' in class_variance_stats:
-            print(f"\n[AHFAL] Class std deviation across clients for cycle {self.client_cycles.get(client_id, 0)}:")
+            #print(f"\n[AHFAL] Class std deviation across clients for cycle {self.client_cycles.get(client_id, 0)}:")
             class_stats = class_variance_stats['class_stats']
             
             # Print per-class standard deviation
@@ -474,25 +470,25 @@ class AHFALSampler:
                 std_dev = stats_dict.get('std_dev', 0)
                 if hasattr(std_dev, 'item'):
                     std_dev = std_dev.item()
-                print(f"  Class {cls}: std_dev = {std_dev:.5f}")
+                #print(f"  Class {cls}: std_dev = {std_dev:.5f}")
         
         # Calculate local class distribution using true labels
-        print(f"[AHFAL] Cycle {self.client_cycles.get(client_id, 0)} - Calculating local class distribution")
+        #print(f"[AHFAL] Cycle {self.client_cycles.get(client_id, 0)} - Calculating local class distribution")
         local_distribution = self.calculate_local_class_distribution(labeled_set, dataset)
         
         # Use the global distribution provided by the trainer if available
         if global_class_distribution is not None:
             self.global_class_distribution = global_class_distribution
-            print("[AHFAL] Using global class distribution from trainer")
+            #print("[AHFAL] Using global class distribution from trainer")
             
             # Print the global distribution
-            print("[AHFAL] Global class distribution:")
+            #print("[AHFAL] Global class distribution:")
             for cls in range(config.NUM_CLASSES):
                 percentage = global_class_distribution.get(cls, 0) * 100
-                print(f"  Class {cls}: {percentage:.2f}%")
+                #print(f"  Class {cls}: {percentage:.2f}%")
                 
             # Print global distribution as a dictionary for easier inspection
-            print(f"[AHFAL] Global class distribution (dict format): {global_class_distribution}") 
+            #print(f"[AHFAL] Global class distribution (dict format): {global_class_distribution}") 
         else:
             # If global distribution is not available, raise an error
             raise ValueError("[AHFAL] Error: Global class distribution not provided. Cannot proceed without global distribution.")
@@ -524,10 +520,10 @@ class AHFALSampler:
                         labeled_pseudo_counts[pred] += 1
             
             # Print the labeled set pseudo-class distribution
-            print(f"[AHFAL] Labeled set pseudo-class distribution:")
+            #print(f"[AHFAL] Labeled set pseudo-class distribution:")
             for cls in range(config.NUM_CLASSES):  # Use NUM_CLASSES from config
                 percentage = (labeled_pseudo_counts.get(cls, 0) / total_labeled * 100) if total_labeled > 0 else 0
-                print(f"  Class {cls}: {labeled_pseudo_counts.get(cls, 0)} samples ({percentage:.1f}%)")
+                #print(f"  Class {cls}: {labeled_pseudo_counts.get(cls, 0)} samples ({percentage:.1f}%)")
         
         # Calculate the current class distribution percentages
         current_distribution = {cls: count/total_labeled for cls, count in labeled_pseudo_counts.items()} if total_labeled > 0 else {cls: 0 for cls in range(config.NUM_CLASSES)}
@@ -553,11 +549,11 @@ class AHFALSampler:
         
         
         # Step 4: No filtering by confidence threshold - using all samples
-        print(f"[AHFAL] Using all {len(indices)} samples for selection")
+        #print(f"[AHFAL] Using all {len(indices)} samples for selection")
         
         # Get all available pseudo-classes in the unlabeled pool
         available_classes = set(pseudo_labels)
-        print(f"[AHFAL] Available pseudo-classes in unlabeled pool: {sorted(list(available_classes))}")
+        #print(f"[AHFAL] Available pseudo-classes in unlabeled pool: {sorted(list(available_classes))}")
         
         # Step 5: Calculate the target counts for each class
         target_counts = self.compute_target_counts(
@@ -576,13 +572,13 @@ class AHFALSampler:
         
         # Count available samples by pseudo-class
         available_by_class = {cls: len(samples) for cls, samples in class_entropy_mapping.items() if len(samples) > 0}
-        print(f"[AHFAL] Available samples by pseudo-class: {available_by_class}")
+        #print(f"[AHFAL] Available samples by pseudo-class: {available_by_class}")
         
         # Step 7: Check if target counts are achievable
         for cls, count in target_counts.items():
             available = available_by_class.get(cls, 0)
             if count > available:
-                print(f"[AHFAL] Warning: Target count {count} for pseudo-class {cls} exceeds available {available}")
+                #print(f"[AHFAL] Warning: Target count {count} for pseudo-class {cls} exceeds available {available}")
                 # Adjust target count to available
                 target_counts[cls] = available
         
@@ -618,7 +614,7 @@ class AHFALSampler:
                     if remaining <= 0:
                         break
                 
-                print(f"[AHFAL] Redistributed {num_samples - total_adjusted} samples, new target counts: {target_counts}")
+                #print(f"[AHFAL] Redistributed {num_samples - total_adjusted} samples, new target counts: {target_counts}")
         
         # Step 9: Select samples based on entropy within each pseudo-class
         selected_samples = []
@@ -643,12 +639,12 @@ class AHFALSampler:
                 selected_samples.extend(selected_indices)
                 
                 balanced_selections[cls] = num_to_select
-                print(f"[AHFAL] Selected {num_to_select} samples from pseudo-class {cls}")
+                #print(f"[AHFAL] Selected {num_to_select} samples from pseudo-class {cls}")
         
         # Step 10: Check if we need to handle unallocated budget
         remaining_to_select = num_samples - len(selected_samples)
         if remaining_to_select > 0:
-            print(f"[AHFAL] WARNING: Still need to select {remaining_to_select} samples")
+            #print(f"[AHFAL] WARNING: Still need to select {remaining_to_select} samples")
             
             # As a last resort, just select any remaining samples by entropy
             remaining_indices = [idx for idx in unlabeled_set if idx not in selected_samples]
@@ -666,22 +662,6 @@ class AHFALSampler:
                 selected_samples.extend(additional_indices)
                 
                 print(f"[AHFAL] Selected {additional} last-resort samples based on entropy")
-        
-
-        # ONLY FOR ABLATION: ADD THIS FOR THE PURE ENTROPY-BASED SELECTION
-        #print(f"[AHFAL] ABLATION: Selecting top {num_samples} samples with highest entropy (ignoring class balance)")
-        
-        # Create a list of (index, entropy) tuples
-        #samples_with_entropy = list(zip(indices, entropy_scores))
-        
-        # Sort by entropy (highest first)
-        #samples_with_entropy.sort(key=lambda x: x[1], reverse=True)
-        
-        # Select top samples by entropy
-        #num_to_select = min(num_samples, len(samples_with_entropy))
-        #selected_samples = [sample[0] for sample in samples_with_entropy[:num_to_select]]
-
-        # END ABLATION
 
         # Calculate remaining unlabeled samples
         remaining_unlabeled = [idx for idx in unlabeled_set if idx not in selected_samples]
@@ -706,13 +686,13 @@ class AHFALSampler:
         for cls in range(config.NUM_CLASSES):  
             final_class_counts[cls] = sum(1 for label in selected_pseudo_classes if label == cls)
         
-        print(f"\n[AHFAL] Final selection pseudo-class distribution:")
+        #print(f"\n[AHFAL] Final selection pseudo-class distribution:")
         for cls in range(config.NUM_CLASSES):  
             count = final_class_counts.get(cls, 0)
             percentage = count / len(selected_samples) * 100 if len(selected_samples) > 0 else 0
             #target = target_counts.get(cls, 0)
         
-        print(f"[AHFAL] Total selected: {len(selected_samples)} out of budget {num_samples}")
+        #print(f"[AHFAL] Total selected: {len(selected_samples)} out of budget {num_samples}")
         
         # Calculate the new distribution after this selection
         future_distribution = {}

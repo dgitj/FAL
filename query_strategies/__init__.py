@@ -7,7 +7,6 @@ from .feal import FEALSampler
 from .logo import LoGoSampler
 from .coreset import CoreSetSampler
 from .ahfal import AHFALSampler
-from .ablation_class_uncertainty import AblationClassUncertaintySampler
 from .strategy_manager import StrategyManager
 
 # Define __all__ for explicit exports
@@ -20,7 +19,6 @@ __all__ = [
     "NoiseStabilitySampler",
     "FEALSampler",
     "LoGoSampler",
-    "AblationClassUncertaintySampler",
     "CoreSetSampler",
     "AHFALSampler",
 ]

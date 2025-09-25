@@ -1,0 +1,83 @@
+# AHFAL: Adaptive Hierarchical Federated Active Learning
+
+
+### Installation
+```bash
+pip install -r requirements.txt
+```
+
+## ⚙️ Configuration
+
+### Default Settings in config.py
+```python
+CLIENTS = 10        # Federated clients
+ALPHA = 0.1         # Dirichlet non-IID parameter  
+CYCLES = 6          # Active learning cycles
+BUDGET = 2500       # Labels per cycle
+BASE = 5000         # Initial labeled samples
+EPOCHS = 5          # Local training epochs
+COMMUNICATION = 100   # FL communication rounds
+```
+
+### Key Parameters
+```bash
+--strategy {AHFAL,KAFAL,Entropy,BADGE,Random}  # Active learning method
+--alpha FLOAT        # Non-IID level (default: 0.1, lower = more non-IID)
+--cycles N           # Active learning cycles (default: 6)
+--budget N           # Samples to label per cycle (default: 2500)
+--seed N             # Random seed for reproducibility (We used 44)
+```
+
+### Reproduce Main Results
+python main.py --strategy AHFAL --seed 44 --alpha 0.1
+python main.py --strategy AHFAL --seed 44 --alpha 0.3
+python main.py --strategy AHFAL --seed 44 --alpha 0.5
+
+
+## 📁 Repository Structure
+
+```
+FAL/
+├── 📄 main.py                    # Main experiment entry point
+├── ⚙️ config.py                  # Global configuration
+├── 📋 requirements.txt           # Dependencies
+├── 🧠 query_strategies/          # Active learning methods
+│   ├── 🌟 AHFAL.py              # Our proposed method
+│   ├── 📊 kafal.py               # KAFAL baseline
+│   ├── 🎯 entropy.py             # Entropy sampling
+│   ├── 🎪 badge.py               # BADGE sampling
+│   └── 🎲 random.py              # Random baseline
+|   |__ ...
+├── 🏋️ training/                  # Federated learning framework
+│   ├── trainer.py               # Main FL trainer
+│   ├── evaluation.py            # Model evaluation
+│   └── utils.py                 # Training utilities
+├── 🏗️ models/                   # Neural architectures
+├── 📊 data/                     # Data partitioning
+├── 📈 analysis/                 # Logging utilities
+└── 📁 analysis_logs/            # Experiment results (JSON)
+```
+
+---
+
+## 💾 Output & Results
+
+### Experiment Logs
+Results are automatically saved to `analysis_logs/` as JSON files containing:
+- ✅ Global model accuracy per cycle
+- 📊 Per-class accuracy breakdown  
+- 🎯 Sample selection statistics
+- 📈 Class distribution analysis
+
+### Example Output File
+```
+analysis_logs/AHFAL_c10_trial1.json
+```
+
+---
+## 🔬 Reproducibility
+
+### Deterministic Execution
+-  All experiments use comprehensive seeding 
+- Results are deterministic given same environment
+- We used seed 44 for the first trial of each experiment
