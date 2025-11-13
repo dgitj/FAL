@@ -47,7 +47,7 @@ class AHFALSampler:
             _, label = dataset[idx]
             class_counts[label] += 1
         
-        print("[AHFAL] Local class distribution from true labels:")
+        #print("[AHFAL] Local class distribution from true labels:")
         for cls in range(config.NUM_CLASSES):
             percentage = (class_counts.get(cls, 0) / len(labeled_set) * 100) if len(labeled_set) > 0 else 0
             #print(f"  Class {cls}: {class_counts.get(cls, 0)} samples ({percentage:.1f}%)")     
@@ -315,7 +315,7 @@ class AHFALSampler:
             for cls, std_dev in class_std_devs.items():
                 if std_dev < 12.0:  # Using the threshold
                     low_variance_classes.add(cls)
-                    print(f"[AHFAL] Class {cls} has low variance (std_dev = {std_dev:.5f}) - using combined models")
+                    #print(f"[AHFAL] Class {cls} has low variance (std_dev = {std_dev:.5f}) - using combined models")
         
         # Collect predictions
         model.eval()
@@ -703,13 +703,20 @@ class AHFALSampler:
         
         # Calculate how close we got to the global distribution
         dist_error = sum(abs(future_distribution.get(cls, 0) - self.global_class_distribution.get(cls, 0)) for cls in range(config.NUM_CLASSES)) / 2
-        print(f"[AHFAL] Distribution error after selection: {dist_error:.4f} (lower is better)")
+        #print(f"[AHFAL] Distribution error after selection: {dist_error:.4f} (lower is better)")
         
         # Display improvement compared to initial distribution
         if total_labeled > 0:
             initial_distribution = {cls: count/total_labeled for cls, count in labeled_pseudo_counts.items()}
             initial_error = sum(abs(initial_distribution.get(cls, 0) - self.global_class_distribution.get(cls, 0)) for cls in range(config.NUM_CLASSES)) / 2
             improvement = initial_error - dist_error
-            print(f"[AHFAL] Initial error: {initial_error:.4f}, Improvement: {improvement:.4f} ({improvement/initial_error*100:.1f}% better)")
+            # print(f"[AHFAL] Initial error: {initial_error:.4f}, Improvement: {improvement:.4f} ({improvement/initial_error*100:.1f}% better)")
         
-        return selected_samples, remaining_unlabeled
+        # Create class distribution vector for selected samples
+        selected_distribution = np.zeros(config.NUM_CLASSES)
+        for cls in range(config.NUM_CLASSES):
+            selected_distribution[cls] = final_class_counts.get(cls, 0)
+        if len(selected_samples) > 0:
+            selected_distribution = selected_distribution / len(selected_samples)
+        
+        return selected_samples, remaining_unlabeled, selected_distribution

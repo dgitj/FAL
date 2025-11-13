@@ -1,4 +1,4 @@
-# AHFAL: Adaptive Hierarchical Federated Active Learning
+# AHFAL: Adaptive Hybrid Federated Active Learning
 
 
 ### Installation

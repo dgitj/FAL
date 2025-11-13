@@ -13,11 +13,11 @@ class FederatedALLogger:
         os.makedirs(self.log_dir, exist_ok=True)
         
         # Initialize logging structures
-        self.selected_samples_count = {}  # Only store counts, not indices
-        self.sample_classes = {}
         self.global_accuracy = {}
         self.class_accuracies = {}
         self.round_history = []
+        self.communication_costs = {}  # NEW: Track communication costs
+        self.cycle_times = {}  # NEW: Track wall-clock time per cycle
         
         # Print config variables
         print("\n===== Experiment Configuration =====")
@@ -26,24 +26,59 @@ class FederatedALLogger:
                 print(f"{key}: {value}")
         print("===================================\n")
         
-    def log_selected_samples(self, cycle, client_samples, client_id):
-        if cycle not in self.selected_samples_count:
-            self.selected_samples_count[cycle] = {}
-        # Only store the count, not the actual indices
-        self.selected_samples_count[cycle][client_id] = len(client_samples)
-        if cycle not in self.round_history:
-            self.round_history.append(cycle)
-    
-    def log_sample_classes(self, cycle, client_classes, client_id):
-        if cycle not in self.sample_classes:
-            self.sample_classes[cycle] = {}
-        self.sample_classes[cycle][client_id] = client_classes.copy()
-    
     def log_global_accuracy(self, cycle, accuracy):
         self.global_accuracy[cycle] = float(accuracy)
     
     def log_class_accuracies(self, cycle, class_accuracies):
         self.class_accuracies[cycle] = {str(k): float(v) for k, v in class_accuracies.items()}
+    
+    def log_cycle_time(self, cycle, time_seconds):
+        """
+        Log wall-clock time for a cycle.
+        
+        Args:
+            cycle: AL cycle number
+            time_seconds: Time in seconds
+        """
+        self.cycle_times[cycle] = float(time_seconds)
+    
+    def log_communication_costs(self, cycle, model_params, model_bytes, num_clients, 
+                                 client_class_distributions, global_distribution=None):
+        """
+        Log communication costs for a cycle.
+        
+        Args:
+            cycle: AL cycle number
+            model_params: Number of model parameters
+            model_bytes: Model size in bytes
+            num_clients: Number of clients
+            client_class_distributions: Dict {client_id: class_distribution_vector}
+            global_distribution: Optional global class distribution dict
+        """
+        # Class distribution size per client (C classes * 4 bytes per float32)
+        class_dist_bytes_per_client = self.num_classes * 4
+        total_extra_bytes = class_dist_bytes_per_client * num_clients
+        total_model_bytes = model_bytes * num_clients
+        
+        # Calculate overhead
+        overhead_pct = (total_extra_bytes / total_model_bytes * 100) if total_model_bytes > 0 else 0
+        
+        self.communication_costs[cycle] = {
+            'model_params': int(model_params),
+            'model_bytes': int(model_bytes),
+            'num_clients': int(num_clients),
+            'extra_bytes_per_client': int(class_dist_bytes_per_client),
+            'total_model_bytes': int(total_model_bytes),
+            'total_extra_bytes': int(total_extra_bytes),
+            'overhead_percentage': float(overhead_pct),
+            'client_distributions': {str(cid): vec.tolist() if hasattr(vec, 'tolist') else vec 
+                                     for cid, vec in client_class_distributions.items()}
+        }
+        
+        if global_distribution is not None:
+            self.communication_costs[cycle]['global_distribution'] = {
+                str(k): float(v) for k, v in global_distribution.items()
+            }
     
     def save_data(self):
         # Convert numpy types to Python types
@@ -71,10 +106,10 @@ class FederatedALLogger:
             'num_clients': self.num_clients,
             'num_classes': self.num_classes,
             'config': config_vars,
-            'selected_samples_count': convert_for_json(self.selected_samples_count),
-            'sample_classes': convert_for_json(self.sample_classes),
             'global_accuracy': convert_for_json(self.global_accuracy),
-            'class_accuracies': convert_for_json(self.class_accuracies)
+            'class_accuracies': convert_for_json(self.class_accuracies),
+            'communication_costs': convert_for_json(self.communication_costs),
+            'cycle_times': convert_for_json(self.cycle_times)
         }
         
         # Save JSON file

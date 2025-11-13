@@ -9,6 +9,7 @@ import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import time
 from torch.utils.data import DataLoader
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data.sampler import SubsetRandomSampler
@@ -27,7 +28,7 @@ from data.sampler import SubsetSequentialSampler
 from training.trainer import FederatedTrainer
 from training.evaluation import evaluate_model, evaluate_per_class_accuracy
 from training.utils import (
-    set_all_seeds, get_seed_worker, log_config, get_device
+    set_all_seeds, get_seed_worker, log_config, get_device, calculate_model_size
 )
 from query_strategies.strategy_manager import StrategyManager
 from analysis.logger_strategy import FederatedALLogger
@@ -318,10 +319,6 @@ def main():
         loss_weight_list = []
         
         # Initialize trainer with common settings
-        trainer = FederatedTrainer(device, config, logger)
-        
-        # Track starting cycle for resuming from checkpoint
-        cycle_start = 0
         
         for c in range(config.CLIENTS):
             # Setup deterministic data selection
@@ -385,11 +382,6 @@ def main():
             client_models.append(copy.deepcopy(resnet8).to(device))
         
         data_num = np.array(data_num)
-
-        # Log initial data distributions
-        for c in range(config.CLIENTS):
-            initial_class_labels = [id2lab[idx] for idx in labeled_set_list[c]]
-            logger.log_sample_classes(0, initial_class_labels, c)
         
         # Update loss_weight_list in strategy_params and initialize strategy manager
         strategy_params['loss_weight_list'] = loss_weight_list
@@ -431,9 +423,13 @@ def main():
             raise ValueError("Error: AHFAL strategy requires global class distribution, but none was computed. "
                             "Make sure there are labeled samples available on all clients.")
         
+        # Track starting cycle for resuming from checkpoint
+        cycle_start = 0
         
         # Active learning cycles
         for cycle in range(cycle_start, config.CYCLES):
+            cycle_start_time = time.time()  # NEW: Start timing
+            
             # Create server model
             if config.MODEL_ARCHITECTURE == "resnet8":
                 if config.DATASET == "MNIST":
@@ -501,6 +497,8 @@ def main():
             server_state_dict = models['server'].state_dict()
             
             # Sample for annotations
+            client_class_distributions = {}  # NEW: Collect class distributions
+            
             for c in range(config.CLIENTS):
                 # Setup deterministic sampling
                 cycle_worker_init_fn = get_seed_worker(trial_seed + c * 100 + cycle * 1000)
@@ -529,7 +527,7 @@ def main():
                 # Select samples using strategy manager
                 if config.ACTIVE_LEARNING_STRATEGY in ["AHFAL"]:
                     # Pass global distribution when using AHFAL
-                    selected_samples, remaining_unlabeled = strategy_manager.select_samples(
+                    selected_samples, remaining_unlabeled, class_dist = strategy_manager.select_samples(
                         models['clients'][c],
                         models['server'],
                         unlabeled_loader,
@@ -543,6 +541,7 @@ def main():
                         current_round=cycle,                 # Add current round
                         total_rounds=config.CYCLES           # Add total rounds
                     )
+                    client_class_distributions[c] = class_dist  # NEW: Store distribution
                 else:
                     # Original call for other strategies
                     selected_samples, remaining_unlabeled = strategy_manager.select_samples(
@@ -555,11 +554,6 @@ def main():
                         labeled_set=labeled_set_list[c],
                         seed=trial_seed + c * 100 + cycle * 1000
                     )
-                
-                # Log selected samples and their classes
-                logger.log_selected_samples(cycle + 1, selected_samples, c)
-                selected_classes = [id2lab[idx] for idx in selected_samples]
-                logger.log_sample_classes(cycle + 1, selected_classes, c)
                 
                 # Update labeled and unlabeled sets
                 labeled_set_list[c].extend(selected_samples)
@@ -593,7 +587,19 @@ def main():
                     worker_init_fn=cycle_worker_init_fn,
                     generator=g_unlabeled_cycle,
                     pin_memory=True
-                ))
+                    ))
+                    
+                    # NEW: Log communication costs for AHFAL
+            if config.ACTIVE_LEARNING_STRATEGY in ["AHFAL"] and len(client_class_distributions) > 0:
+                model_params, model_bytes = calculate_model_size(models['server'])
+                logger.log_communication_costs(
+                    cycle=cycle,
+                    model_params=model_params,
+                    model_bytes=model_bytes,
+                    num_clients=config.CLIENTS,
+                    client_class_distributions=client_class_distributions,
+                    global_distribution=global_distribution
+                )
             
             # Evaluate server model
             acc_server = evaluate_model(models['server'], dataloaders['test'], device)
@@ -613,6 +619,12 @@ def main():
             # Log per-class accuracies
             class_accuracies = evaluate_per_class_accuracy(models['server'], dataloaders['test'], device)
             logger.log_class_accuracies(cycle, class_accuracies)
+            
+            # NEW: Log cycle time
+            cycle_end_time = time.time()
+            cycle_duration = cycle_end_time - cycle_start_time
+            logger.log_cycle_time(cycle, cycle_duration)
+            print(f'Cycle {cycle + 1} completed in {cycle_duration:.2f} seconds')
             
             # Update for next cycle
             loss_weight_list = loss_weight_list_2

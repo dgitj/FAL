@@ -264,3 +264,27 @@ def count_parameters(model):
         int: Number of trainable parameters
     """
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def calculate_model_size(model):
+    """
+    Calculate the size of a model in terms of parameters and bytes.
+    
+    Args:
+        model (nn.Module): PyTorch model to analyze
+        
+    Returns:
+        tuple: (num_parameters, num_bytes)
+            - num_parameters (int): Total number of parameters
+            - num_bytes (int): Total size in bytes
+    """
+    total_params = 0
+    total_bytes = 0
+    
+    for param in model.parameters():
+        num_params = param.numel()
+        total_params += num_params
+        bytes_per_param = param.element_size()
+        total_bytes += num_params * bytes_per_param
+    
+    return total_params, total_bytes
