@@ -2,7 +2,7 @@
 '''
 
 # Dataset selection
-DATASET = "CIFAR10"  # Options are "CIFAR10", "SVHN", "CIFAR100", and "MNIST"
+DATASET = "CIFAR10"  # Options are "CIFAR10", "SVHN", "CIFAR100", "MNIST", and "PathMNIST"
 
 # directory paths for datasets and number of classes
 if DATASET == "CIFAR10":
@@ -17,13 +17,17 @@ elif DATASET == "CIFAR100":
 elif DATASET == "MNIST":
     DATA_ROOT = 'data/mnist'
     NUM_CLASSES = 10
+elif DATASET == "PathMNIST":
+    DATA_ROOT = 'data/medmnist'
+    NUM_CLASSES = 9
+    NUM_TRAIN = 89996
 else:
     DATA_ROOT = 'data/cifar-10-batches-py'  # Default fallback
     NUM_CLASSES = 10
 
 MODEL_ARCHITECTURE = "resnet8"  # Options are "resnet8" and "mobilenet_v2"
 
-ACTIVE_LEARNING_STRATEGY = "AHFAL"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "AHFAL"
+ACTIVE_LEARNING_STRATEGY = "Random"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "AHFAL"
 
 # random seed
 SEED = 44

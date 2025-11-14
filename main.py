@@ -46,12 +46,12 @@ def parse_arguments():
     parser.add_argument('--budget', type=int, help='Active learning budget per cycle')
     parser.add_argument('--base', type=int, help='Initial labeled set size')
     parser.add_argument('--seed', type=int, help='Random seed')
-    parser.add_argument('--dataset', type=str, choices=['CIFAR10', 'SVHN', 'CIFAR100', 'MNIST'], help='Dataset to use')
+    parser.add_argument('--dataset', type=str, choices=['CIFAR10', 'SVHN', 'CIFAR100', 'MNIST', 'PathMNIST'], help='Dataset to use')
     parser.add_argument('--model', type=str, choices=['resnet8', 'mobilenet_v2'], help='Model architecture to use')
     return parser.parse_args()
 
 def load_datasets():
-    """Load and prepare datasets (CIFAR10, SVHN, CIFAR100, or MNIST)."""
+    """Load and prepare datasets (CIFAR10, SVHN, CIFAR100, MNIST, or PathMNIST)."""
     from torchvision.datasets import CIFAR10, SVHN, CIFAR100, MNIST
     import torchvision.transforms as T
 
@@ -135,6 +135,30 @@ def load_datasets():
         test_dataset = MNIST(dataset_dir, train=False, download=True, transform=test_transform)
         select_dataset = MNIST(dataset_dir, train=True, download=True, transform=test_transform)
         
+    elif dataset_name == "PathMNIST":
+        import medmnist
+        from medmnist import INFO
+        
+        train_transform = T.Compose([
+            T.ToTensor(),
+            T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+        ])
+
+        test_transform = T.Compose([
+            T.ToTensor(),
+            T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+        ])
+
+        dataset_dir = config.DATA_ROOT
+        
+        # Load PathMNIST
+        info = INFO['pathmnist']
+        DataClass = getattr(medmnist, info['python_class'])
+    
+        train_dataset = DataClass(split='train', transform=train_transform, download=True, root=dataset_dir)
+        test_dataset = DataClass(split='test', transform=test_transform, download=True, root=dataset_dir)
+        select_dataset = DataClass(split='train', transform=test_transform, download=True, root=dataset_dir)
+        
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")        
     return train_dataset, test_dataset, select_dataset
@@ -184,6 +208,10 @@ def main():
             config.DATA_ROOT = 'data/mnist'
             config.NUM_CLASSES = 10
             config.NUM_TRAIN = 60000  # MNIST train set size
+        elif config.DATASET == "PathMNIST":
+            config.DATA_ROOT = 'data/medmnist'
+            config.NUM_CLASSES = 9
+            config.NUM_TRAIN = 89996
         print(f"Using dataset: {config.DATASET} with {config.NUM_CLASSES} classes and {config.NUM_TRAIN} training samples")
     
     if args.cycles:
@@ -224,6 +252,11 @@ def main():
     # Load datasets
     cifar10_train, cifar10_test, cifar10_select = load_datasets()
     
+    if config.DATASET == "PathMNIST":  
+        cifar10_train.labels = cifar10_train.labels.flatten().astype(int)
+        cifar10_test.labels = cifar10_test.labels.flatten().astype(int)
+        cifar10_select.labels = cifar10_select.labels.flatten().astype(int)
+
     # Prepare for trials
     accuracies = [[] for _ in range(config.TRIALS)]
     
@@ -236,6 +269,8 @@ def main():
         id2lab = [cifar10_train.labels[id] for id in indices]
     elif config.DATASET == "MNIST":
         id2lab = [cifar10_train[id][1] for id in indices]
+    elif config.DATASET == "PathMNIST":  
+        id2lab = cifar10_train.labels.flatten() 
     else:
         id2lab = [cifar10_train[id][1] for id in indices]  # Default to CIFAR10 format
     id2lab = np.array(id2lab)
@@ -284,11 +319,15 @@ def main():
         if config.MODEL_ARCHITECTURE == "resnet8":
             if config.DATASET == "MNIST":
                 base_model = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes)
+            elif config.DATASET == "PathMNIST":
+                base_model = resnet.preact_resnet8_cifar_pathmnist(num_classes=num_classes)
             else:
                 base_model = resnet.preact_resnet8_cifar(num_classes=num_classes)
         elif config.MODEL_ARCHITECTURE == "mobilenet_v2":
             if config.DATASET == "MNIST":
                 base_model = mobilenet_mnist.mobilenet_v2_mnist(num_classes=num_classes)
+            elif config.DATASET == "PathMNIST":
+                base_model = mobilenet.mobilenet_v2_cifar_fm(num_classes=num_classes)
             else:
                 base_model = mobilenet.mobilenet_v2_cifar(num_classes=num_classes)
         else:
@@ -434,11 +473,15 @@ def main():
             if config.MODEL_ARCHITECTURE == "resnet8":
                 if config.DATASET == "MNIST":
                     server = resnet_mnist.preact_resnet8_mnist(num_classes=num_classes).to(device)
+                elif config.DATASET == "PathMNIST":
+                    server = resnet.preact_resnet8_cifar_pathmnist(num_classes=num_classes).to(device)
                 else:
                     server = resnet.preact_resnet8_cifar(num_classes=num_classes).to(device)
             elif config.MODEL_ARCHITECTURE == "mobilenet_v2":
                 if config.DATASET == "MNIST":
                     server = mobilenet_mnist.mobilenet_v2_mnist(num_classes=num_classes).to(device)
+                elif config.DATASET == "PathMNIST":
+                    server = mobilenet.mobilenet_v2_cifar_fm(num_classes=num_classes).to(device)
                 else:
                     server = mobilenet.mobilenet_v2_cifar(num_classes=num_classes).to(device)
             else:

@@ -1017,3 +1017,12 @@ resnet_book = {
 	'56': resnet56_cifar,
 	'110': resnet110_cifar,
 }
+
+
+
+def preact_resnet8_cifar_pathmnist(**kwargs):
+    """ResNet8 for PathMNIST: 3 channels, 28x28, adaptive pooling"""
+    model = PreAct_ResNet_Cifar_fm(PreActBasicBlock, [1, 1, 1], **kwargs)
+    # Change first conv from 1 channel to 3 channels
+    model.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
+    return model
