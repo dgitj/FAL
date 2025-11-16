@@ -27,7 +27,7 @@ else:
 
 MODEL_ARCHITECTURE = "resnet8"  # Options are "resnet8" and "mobilenet_v2"
 
-ACTIVE_LEARNING_STRATEGY = "Random"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "AHFAL"
+ACTIVE_LEARNING_STRATEGY = "Random"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "AHFAL", "IFAL"
 
 # random seed
 SEED = 44

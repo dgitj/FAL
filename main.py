@@ -427,7 +427,7 @@ def main():
         strategy_manager = StrategyManager(**strategy_params)
         
         # If using strategies that need labeled set list or total clients
-        if config.ACTIVE_LEARNING_STRATEGY in ["CoreSet", "AHFAL"]:
+        if config.ACTIVE_LEARNING_STRATEGY in ["CoreSet", "AHFAL", "IFAL"]:
             strategy_manager.set_total_clients(config.CLIENTS)
             strategy_manager.set_labeled_set_list(labeled_set_list)
 
@@ -585,6 +585,20 @@ def main():
                         total_rounds=config.CYCLES           # Add total rounds
                     )
                     client_class_distributions[c] = class_dist  # NEW: Store distribution
+
+                elif config.ACTIVE_LEARNING_STRATEGY in ["IFAL"]:  
+                    # IFAL needs dataset for training local models
+                    selected_samples, remaining_unlabeled = strategy_manager.select_samples(
+                        models['clients'][c],
+                        models['server'],
+                        unlabeled_loader,
+                        c,
+                        unlabeled_set_list[c],
+                        add[c],
+                        labeled_set=labeled_set_list[c],
+                        seed=trial_seed + c * 100 + cycle * 1000,
+                    )
+
                 else:
                     # Original call for other strategies
                     selected_samples, remaining_unlabeled = strategy_manager.select_samples(
