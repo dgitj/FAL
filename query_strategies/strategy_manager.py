@@ -8,6 +8,7 @@ from query_strategies.logo import LoGoSampler
 from query_strategies.coreset import CoreSetSampler
 from query_strategies.ahfal import AHFALSampler
 from query_strategies.ifal import IFALSampler
+from query_strategies.acal import ACALSampler
 
 from config import ACTIVE_LEARNING_STRATEGY
 
@@ -96,6 +97,11 @@ class StrategyManager:
         elif strategy_name == "IFAL":
             print(f"[StrategyManager] Initializing IFAL strategy (inconsistency-based)")
             return IFALSampler(self.device)
+        
+        elif strategy_name == "ACAL":
+            print(f"[StrategyManager] Initializing ACAL strategy (Adaptive Curriculum: Random→Entropy)")
+            # Default JS threshold of 0.08 from the paper
+            return ACALSampler(device=self.device, js_threshold=0.08)
 
         else:
             raise ValueError(f"Invalid strategy name: {strategy_name}")
@@ -177,4 +183,14 @@ class StrategyManager:
                 model, model_server, unlabeled_loader, c, unlabeled_set,
                 num_samples, labeled_set=labeled_set, seed=seed, 
                 dataset=dataset
+            )
+        
+        elif self.strategy_name == "ACAL":
+            # ACAL needs labeled set for JS divergence computation
+            if labeled_set is None and self.labeled_set_list is not None and c < len(self.labeled_set_list):
+                labeled_set = self.labeled_set_list[c]
+            
+            return self.sampler.select_samples(
+                model, model_server, unlabeled_loader, c, unlabeled_set,
+                num_samples, labeled_set=labeled_set, seed=seed
             )
