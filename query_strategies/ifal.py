@@ -562,10 +562,16 @@ class IFALSampler:
                         min(num_samples, len(candidate_idxs)), candidate_features
                     )
                     selected_idxs = candidate_idxs[selected_idxs]
-                else:
-                    # Last resort: select by highest combined uncertainty
-                    print(f"[IFAL] Last resort: selecting by highest U1*U2")
-                    selected_idxs = unlabeled_set[np.argsort(U1 * U2)[-num_samples:]]
+                
+                # Top up if still not enough samples
+                if len(selected_idxs) < num_samples:
+                    print(f"[IFAL] Topping up: need {num_samples - len(selected_idxs)} more samples")
+                    remaining_needed = num_samples - len(selected_idxs)
+                    # Get indices not yet selected
+                    not_selected = np.array([idx for idx in unlabeled_set if idx not in selected_idxs])
+                    # Select by highest U1*U2
+                    additional = not_selected[np.argsort((U1 * U2)[[i for i, idx in enumerate(unlabeled_set) if idx in not_selected]])[-remaining_needed:]]
+                    selected_idxs = np.concatenate([selected_idxs, additional])
         
         except Exception as e:
             print(f"[IFAL] Error in Otsu thresholding: {e}, using fallback")
