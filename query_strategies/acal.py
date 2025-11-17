@@ -10,7 +10,7 @@ from scipy.stats import entropy
 
 
 class ACALSampler:
-    def __init__(self, device="cuda", js_threshold=0.08):
+    def __init__(self, device="cuda", js_threshold=0.08, js_sample_size=2000):
         """
         ACAL: Adaptive Curriculum Active Learning
         
@@ -26,6 +26,7 @@ class ACALSampler:
         Args:
             device (str): Device to run calculations on
             js_threshold (float): JS divergence threshold for phase switching (default: 0.08)
+            js_sample_size (int): Number of samples to use for JS divergence calculation (default: 2000)
         """
         if device == "cuda" and not torch.cuda.is_available():
             print("[ACAL] CUDA not available, falling back to CPU")
@@ -34,10 +35,12 @@ class ACALSampler:
             self.device = device
         
         self.js_threshold = js_threshold
+        self.js_sample_size = js_sample_size
         self.phase = "diversity"  # Start with diversity phase
         self.debug = False
         
         print(f"[ACAL] Initialized with JS threshold: {js_threshold}")
+        print(f"[ACAL] JS divergence sample size: {js_sample_size}")
         print(f"[ACAL] Phase 1: Random sampling (diversity)")
         print(f"[ACAL] Phase 2: Entropy sampling (uncertainty)")
     
@@ -277,21 +280,32 @@ class ACALSampler:
             print(f"[ACAL] Current phase: {self.phase}")
             print(f"[ACAL] Unlabeled pool size: {len(unlabeled_set)}")
         
-        # Step 1: Extract embeddings for all data and labeled data
+        # Step 1: Extract embeddings - use subset for efficiency
         dataset = unlabeled_loader.dataset
         
-        # Create loader for all training data
-        all_indices = list(range(len(dataset)))
-        all_loader = DataLoader(
+        # Sample a subset for JS divergence calculation instead of using all data
+        dataset_size = len(dataset)
+        if dataset_size > self.js_sample_size:
+            # Randomly sample indices for JS calculation
+            sample_indices = np.random.choice(dataset_size, self.js_sample_size, replace=False).tolist()
+            if self.debug:
+                print(f"[ACAL] Using {self.js_sample_size} samples (out of {dataset_size}) for JS divergence")
+        else:
+            sample_indices = list(range(dataset_size))
+            if self.debug:
+                print(f"[ACAL] Using all {dataset_size} samples for JS divergence")
+        
+        # Create loader for sampled data
+        sample_loader = DataLoader(
             dataset,
             batch_size=config.BATCH,
-            sampler=SubsetSequentialSampler(all_indices),
+            sampler=SubsetSequentialSampler(sample_indices),
             num_workers=0,
             pin_memory=True
         )
         
-        # Extract embeddings
-        all_embeddings = self.get_embeddings(model, all_loader)
+        # Extract embeddings from sample
+        sample_embeddings = self.get_embeddings(model, sample_loader)
         
         if labeled_set is not None and len(labeled_set) > 0:
             # Create loader for labeled data
@@ -304,8 +318,8 @@ class ACALSampler:
             )
             labeled_embeddings = self.get_embeddings(model, labeled_loader)
             
-            # Step 2: Compute JS divergence
-            js_divergence = self.compute_js_divergence(all_embeddings, labeled_embeddings)
+            # Step 2: Compute JS divergence using sample
+            js_divergence = self.compute_js_divergence(sample_embeddings, labeled_embeddings)
             
             if self.debug:
                 print(f"[ACAL] JS divergence: {js_divergence:.6f} (threshold: {self.js_threshold})")

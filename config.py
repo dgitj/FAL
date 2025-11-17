@@ -2,7 +2,7 @@
 '''
 
 # Dataset selection
-DATASET = "PathMNIST"  # Options are "CIFAR10", "SVHN", "CIFAR100", "MNIST", and "PathMNIST"
+DATASET = "CIFAR10"  # Options are "CIFAR10", "SVHN", "CIFAR100", "MNIST", and "PathMNIST"
 
 # directory paths for datasets and number of classes
 if DATASET == "CIFAR10":
@@ -27,7 +27,7 @@ else:
 
 MODEL_ARCHITECTURE = "resnet8"  # Options are "resnet8" and "mobilenet_v2"
 
-ACTIVE_LEARNING_STRATEGY = "IFAL"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "AHFAL", "IFAL", "ACAL"
+ACTIVE_LEARNING_STRATEGY = "ACAL"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "AHFAL", "IFAL", "ACAL"
 
 # random seed
 SEED = 44
