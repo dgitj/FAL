@@ -19,6 +19,7 @@ import models.preact_resnet as resnet
 import models.preact_resnet_mnist as resnet_mnist
 import models.mobilenet_v2 as mobilenet
 import models.mobilenet_v2_mnist as mobilenet_mnist
+import models.cnn4 as cnn4
 
 # Import data utilities
 from data.dirichlet_partitioner import dirichlet_balanced_partition
@@ -47,7 +48,7 @@ def parse_arguments():
     parser.add_argument('--base', type=int, help='Initial labeled set size')
     parser.add_argument('--seed', type=int, help='Random seed')
     parser.add_argument('--dataset', type=str, choices=['CIFAR10', 'SVHN', 'CIFAR100', 'MNIST', 'PathMNIST'], help='Dataset to use')
-    parser.add_argument('--model', type=str, choices=['resnet8', 'mobilenet_v2'], help='Model architecture to use')
+    parser.add_argument('--model', type=str, choices=['resnet8', 'mobilenet_v2', 'cnn4'], help='Model architecture to use')
     return parser.parse_args()
 
 def load_datasets():
@@ -330,6 +331,8 @@ def main():
                 base_model = mobilenet.mobilenet_v2_cifar_fm(num_classes=num_classes)
             else:
                 base_model = mobilenet.mobilenet_v2_cifar(num_classes=num_classes)
+        elif config.MODEL_ARCHITECTURE == "cnn4":
+            base_model = cnn4.cnn4_cifar(num_classes=num_classes)
         else:
             raise ValueError(f"Unknown model architecture: {config.MODEL_ARCHITECTURE}")
         
@@ -484,6 +487,8 @@ def main():
                     server = mobilenet.mobilenet_v2_cifar_fm(num_classes=num_classes).to(device)
                 else:
                     server = mobilenet.mobilenet_v2_cifar(num_classes=num_classes).to(device)
+            elif config.MODEL_ARCHITECTURE == "cnn4":
+                server = cnn4.cnn4_cifar(num_classes=num_classes).to(device)
             else:
                 raise ValueError(f"Unknown model architecture: {config.MODEL_ARCHITECTURE}")
             models = {'clients': client_models, 'server': server}

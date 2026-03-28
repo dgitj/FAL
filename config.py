@@ -25,7 +25,7 @@ else:
     DATA_ROOT = 'data/cifar-10-batches-py'  # Default fallback
     NUM_CLASSES = 10
 
-MODEL_ARCHITECTURE = "resnet8"  # Options are "resnet8" and "mobilenet_v2"
+MODEL_ARCHITECTURE = "resnet8"  # Options are "resnet8" and "mobilenet_v2", "cnn4"
 
 ACTIVE_LEARNING_STRATEGY = "ACAL"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "AHFAL", "IFAL", "ACAL"
 
