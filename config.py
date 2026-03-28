@@ -25,9 +25,9 @@ else:
     DATA_ROOT = 'data/cifar-10-batches-py'  # Default fallback
     NUM_CLASSES = 10
 
-MODEL_ARCHITECTURE = "resnet8"  # Options are "resnet8" and "mobilenet_v2", "cnn4"
+MODEL_ARCHITECTURE = "cnn4"  # Options are "resnet8" and "mobilenet_v2", "cnn4"
 
-ACTIVE_LEARNING_STRATEGY = "ACAL"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "AHFAL", "IFAL", "ACAL"
+ACTIVE_LEARNING_STRATEGY = "AHFAL"  # Options are "KAFAL", "Entropy", "BADGE", "Random", "Noise", "FEAL", "LOGO", "CoreSet", "AHFAL", "IFAL", "ACAL"
 
 # random seed
 SEED = 44
@@ -39,12 +39,12 @@ ALPHA = 0.1
 # setting
 BUDGET  = 2500
 BASE = 5000
-EPOCH=1
-COMMUNICATION=2
-CYCLES=2
+EPOCH=5
+COMMUNICATION=100
+CYCLES=6
 RATIO=1.0
-CLIENTS=2
-TRIALS=1
+CLIENTS=10
+TRIALS=3
 LOCAL_MODEL_UPDATE = "Vanilla" # Options are "Vanilla" and "KFCU"  
 
 # training
