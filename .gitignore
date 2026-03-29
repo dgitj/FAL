@@ -1,5 +1,4 @@
 # Ignore data and output folders
-/data/
 /distribution/
 /checkpoints/
 /analysis_logs/
@@ -22,4 +21,7 @@ env/
 # IDE/project files (optional, falls du mit VSCode oder PyCharm arbeitest)
 .vscode/
 .idea/
-/data/
+
+data/cifar-10-batches-py/
+*.tar.gz
+
